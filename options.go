@@ -93,6 +93,14 @@ func WithMeterProvider(mp metric.MeterProvider) Option {
 	})
 }
 
+func WithMetricsNamespace(namespace string) Option {
+	return optionFunc(func(c *Client) {
+		if namespace != "" {
+			c.namespace = namespace
+		}
+	})
+}
+
 // --- tracing ---
 
 func WithTraceProvider(provider trace.TracerProvider) Option {
@@ -241,7 +249,7 @@ type Config struct {
 	UnstableResp3 bool `envconfig:"REDIS_UNSTABLE_RESP3"`
 }
 
-func parseConfig(cfg *Config) *rdb.Options {
+func parseClientConfig(cfg *Config) *rdb.Options {
 	opts := &rdb.Options{
 		Network:               cfg.Network,
 		Username:              cfg.Username,
