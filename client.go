@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/mkbeh/redis/internal/pkg/collector"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 )
@@ -24,6 +26,8 @@ type Client struct {
 	marshaller   MarshallerFunc
 	meterOptions []redisotel.MetricsOption
 	traceOptions []redisotel.TracingOption
+	namespace    string
+	labels       map[string]string
 }
 
 func NewClient(opts ...Option) (*Client, error) {
@@ -56,7 +60,7 @@ func newClient(cluster bool, opts []Option) (*Client, error) {
 		connOpts.ClientName = c.getID()
 		c.conn = rdb.NewClusterClient(connOpts)
 	} else {
-		connOpts := parseConfig(c.cfg)
+		connOpts := parseClientConfig(c.cfg)
 		connOpts.TLSConfig = c.tls
 		connOpts.ClientName = c.getID()
 		connOpts.Limiter = c.limiter
@@ -70,6 +74,11 @@ func newClient(cluster bool, opts []Option) (*Client, error) {
 	if err := c.conn.Ping(context.Background()).Err(); err != nil {
 		return nil, err
 	}
+
+	c.exposeMetrics()
+
+	metricsCollector := collector.NewCollector(c.namespace, "redis", c.labels, c.conn)
+	prometheus.MustRegister(metricsCollector)
 
 	return c, nil
 }
@@ -378,6 +387,14 @@ func (c *Client) addMeterOption(opt redisotel.MetricsOption) {
 
 func (c *Client) addTraceOption(opt redisotel.TracingOption) {
 	c.traceOptions = append(c.traceOptions, opt)
+}
+
+func (c *Client) exposeMetrics() {
+	if c.labels == nil {
+		c.labels = make(prometheus.Labels)
+	}
+
+	c.labels["client_id"] = c.getID()
 }
 
 func (c *Client) exposeInstrumenting() error {
