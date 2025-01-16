@@ -11,7 +11,7 @@ integration with OpenTelemetry for tracing and metrics.
 ## Getting started
 
 Here's a basic overview of using (more examples can be
-found [here](https://github.com/mkbeh/redis/tree/main/examples/sample)):
+found [here](https://github.com/mkbeh/xredis/tree/main/examples/sample)):
 
 ```go
 package main
@@ -19,7 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/mkbeh/redis"
+	"github.com/mkbeh/xredis"
 )
 
 var ctx = context.Background()
