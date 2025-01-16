@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/mkbeh/redis"
+	"github.com/mkbeh/xredis"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

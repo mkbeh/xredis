@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/mkbeh/redis/internal/pkg/collector"
+	"github.com/mkbeh/xredis/internal/pkg/collector"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
