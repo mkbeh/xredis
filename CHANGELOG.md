@@ -1,6 +1,7 @@
-# 0.1.1 (January 16, 2025)
+# 0.1.1 (March 8, 2025)
 
-* chore: rename module to xredis
+* build: bump go ver to 1.24
+* build: bump dependencies
 
 # 0.1.0 (December 09, 2024)
 

@@ -7,7 +7,7 @@ This is a sample REST API service implemented using go-redis as the connector to
 Setup a Redis database.
 
 ```shell
-docker-compose up
+docker-compose up --build -d
 ```
 
 Configure the database connection with environment variables:
