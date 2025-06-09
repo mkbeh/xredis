@@ -5,15 +5,13 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/mkbeh/xredis"
+	redis "github.com/mkbeh/xredis"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var client *redis.Client
 
-var (
-	addrs string
-)
+var addrs string
 
 func init() {
 	addrs = os.Getenv("REDIS_ADDRS")
