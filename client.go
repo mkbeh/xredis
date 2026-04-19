@@ -87,11 +87,11 @@ func newClient(cluster bool, opts []Option) (*Client, error) {
 func (c *Client) Exists(ctx context.Context, key string) (exists bool, err error) {
 	res := c.conn.Exists(ctx, key)
 	if err = res.Err(); err != nil {
-		return
+		return exists, err
 	}
 
 	exists = res.Val() == 1
-	return
+	return exists, err
 }
 
 // HExists returns if field is an existing field in the hash stored at key.
@@ -108,7 +108,7 @@ func (c *Client) HIncrBy(ctx context.Context, key, field string, incr int64) (er
 func (c *Client) HGetAll(ctx context.Context, key string, dst any) (err error) {
 	res := c.conn.HGetAll(ctx, key)
 	if err = res.Err(); err != nil {
-		return
+		return err
 	}
 
 	if len(res.Val()) == 0 {
@@ -124,9 +124,9 @@ func (c *Client) HGet(ctx context.Context, key, field string, dst any) (err erro
 		if errors.Is(err, rdb.Nil) {
 			return ErrKeyNotFound
 		}
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // HSet sets field in the hash stored at key to value and its expiration if expiration wasn't set before.
@@ -138,7 +138,7 @@ func (c *Client) HSet(ctx context.Context, key, field string, value any, ttl tim
 	case reflect.Invalid, reflect.Pointer, reflect.Array, reflect.Map, reflect.Struct,
 		reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		err = ErrInvalidFieldType
-		return
+		return err
 	default:
 	}
 
@@ -147,16 +147,16 @@ func (c *Client) HSet(ctx context.Context, key, field string, value any, ttl tim
 
 	cmder, err := pipe.Exec(ctx)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, cmd := range cmder {
 		if err = cmd.Err(); err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return err
 }
 
 // HSetObject sets fields of data object in the hash stored at key to value.
@@ -182,16 +182,16 @@ func (c *Client) HSetObject(ctx context.Context, key string, data any, ttl time.
 
 	cmder, err := pipe.Exec(ctx)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, cmd := range cmder {
 		if err = cmd.Err(); err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return err
 }
 
 func (c *Client) Get(ctx context.Context, key string, dst any) (err error) {
@@ -199,9 +199,9 @@ func (c *Client) Get(ctx context.Context, key string, dst any) (err error) {
 		if errors.Is(err, rdb.Nil) {
 			return ErrKeyNotFound
 		}
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // Set Redis `SET key value [expiration]` command.
@@ -210,9 +210,9 @@ func (c *Client) Set(ctx context.Context, key string, val interface{}, expiratio
 	res := c.conn.Set(ctx, key, val, expiration)
 	err = res.Err()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return err
 }
 
 func (c *Client) SetStruct(ctx context.Context, key string, val interface{}, expiration time.Duration) (err error) {
@@ -223,9 +223,9 @@ func (c *Client) SetStruct(ctx context.Context, key string, val interface{}, exp
 	res := c.conn.Set(ctx, key, b, expiration)
 	err = res.Err()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return err
 }
 
 func (c *Client) Bool(ctx context.Context, key string) (val, ok bool, err error) {
@@ -234,12 +234,12 @@ func (c *Client) Bool(ctx context.Context, key string) (val, ok bool, err error)
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Bytes(ctx context.Context, key string) (val []byte, ok bool, err error) {
@@ -248,12 +248,12 @@ func (c *Client) Bytes(ctx context.Context, key string) (val []byte, ok bool, er
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Float64(ctx context.Context, key string) (val float64, ok bool, err error) {
@@ -262,12 +262,12 @@ func (c *Client) Float64(ctx context.Context, key string) (val float64, ok bool,
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Int(ctx context.Context, key string) (val int, ok bool, err error) {
@@ -276,12 +276,12 @@ func (c *Client) Int(ctx context.Context, key string) (val int, ok bool, err err
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Int64(ctx context.Context, key string) (val int64, ok bool, err error) {
@@ -290,12 +290,12 @@ func (c *Client) Int64(ctx context.Context, key string) (val int64, ok bool, err
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Uint64(ctx context.Context, key string) (val uint64, ok bool, err error) {
@@ -304,12 +304,12 @@ func (c *Client) Uint64(ctx context.Context, key string) (val uint64, ok bool, e
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 // Get Redis `GET key` command. It returns string. Return error when key does not exist.
@@ -319,39 +319,39 @@ func (c *Client) String(ctx context.Context, key string) (val string, ok bool, e
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			err = nil
-			return
+			return val, ok, err
 		}
-		return
+		return val, ok, err
 	}
 	ok = true
-	return
+	return val, ok, err
 }
 
 func (c *Client) Incr(ctx context.Context, key string) (err error) {
 	res := c.conn.Incr(ctx, key)
 	err = res.Err()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return err
 }
 
 func (c *Client) Decr(ctx context.Context, key string) (err error) {
 	res := c.conn.Decr(ctx, key)
 	err = res.Err()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return err
 }
 
 func (c *Client) Delete(ctx context.Context, key string) (err error) {
 	res := c.conn.Del(ctx, key)
 	err = res.Err()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // MassDelete realise pipeline mass delete values by key slice.
@@ -364,10 +364,10 @@ func (c *Client) MassDelete(ctx context.Context, keys []string) (err error) {
 	for _, cmder := range cmders {
 		err = cmder.Err()
 		if err != nil {
-			return
+			return err
 		}
 	}
-	return
+	return err
 }
 
 func (c *Client) Close() error {

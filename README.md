@@ -1,17 +1,26 @@
-# Redis Library
+# xredis
 
-This library provides an API for working with Redis, using [go-redis](github.com/redis/go-redis) and
-integration with OpenTelemetry for tracing and metrics.
+A Go Redis client wrapper built on [go-redis](https://github.com/redis/go-redis) with built-in OpenTelemetry tracing,
+Prometheus metrics, and support for both standalone and cluster modes.
 
 ## Features
 
-- Client and Cluster supporting
-- Observability
+- Standalone and cluster client support
+- OpenTelemetry tracing and metrics via `redisotel`
+- Prometheus metrics via custom collector
+- TLS support
+- Rate limiting via `rdb.Limiter`
+- Configurable marshaller (defaults to `json.Marshal`)
+- Hash operations with struct mapping
+- Pipeline-based bulk delete
 
-## Getting started
+## Installation
 
-Here's a basic overview of using (more examples can be
-found [here](https://github.com/mkbeh/xredis/tree/main/examples/sample)):
+```bash
+go get github.com/mkbeh/xredis
+```
+
+## Quick start
 
 ```go
 package main
@@ -19,67 +28,169 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/mkbeh/xredis"
+
+	redis "github.com/mkbeh/xredis"
 )
 
-var ctx = context.Background()
-
 func main() {
-	cfg := &redis.Config{
-		Addrs: "localhost:6379",
-	}
-
 	client, err := redis.NewClient(
-		redis.WithConfig(cfg),
-		redis.WithClientID("test-client"),
+		redis.WithConfig(&redis.Config{
+			Addrs: "localhost:6379",
+		}),
+		redis.WithClientID("my-service"),
 	)
 	if err != nil {
 		panic(err)
 	}
 	defer client.Close()
 
-	if err := client.Set(ctx, "value_1", "First value", 0); err != nil {
+	ctx := context.Background()
+
+	if err := client.Set(ctx, "greeting", "hello", 0); err != nil {
 		panic(err)
 	}
 
 	var value string
-	if err := client.Get(ctx, "value_1", &value); err != nil {
+	if err := client.Get(ctx, "greeting", &value); err != nil {
 		panic(err)
 	}
 
-	fmt.Println("key1", value)
+	fmt.Println(value) // hello
 }
-
 ```
+
+More examples: [examples/sample](https://github.com/mkbeh/xredis/tree/main/examples/sample)
+
+## Cluster mode
+
+```go
+client, err := redis.NewClusterClient(
+redis.WithConfig(&redis.Config{
+Addrs: "node1:6379,node2:6379,node3:6379",
+}),
+)
+```
+
+## Hash operations
+
+```go
+// Set individual hash field
+client.HSet(ctx, "user:1", "name", "Alice", time.Hour)
+
+// Set all fields from a struct
+type User struct {
+Name  string `redis:"name"`
+Email string `redis:"email"`
+}
+client.HSetObject(ctx, "user:1", User{Name: "Alice", Email: "alice@example.com"}, time.Hour)
+
+// Get all fields into a struct
+var u User
+client.HGetAll(ctx, "user:1", &u)
+```
+
+## Observability
+
+```go
+client, err := redis.NewClient(
+redis.WithConfig(cfg),
+redis.WithTraceProvider(tp),
+redis.WithMeterProvider(mp),
+redis.WithMetricsNamespace("myapp"),
+redis.WithDBStatement(false), // hide raw commands from traces
+)
+```
+
+Prometheus metrics are registered automatically on client creation.
+
+## TLS
+
+```go
+client, err := redis.NewClient(
+redis.WithConfig(cfg),
+redis.WithTLS(&tls.Config{
+MinVersion: tls.VersionTLS12,
+}),
+)
+```
+
+## Options reference
+
+| Option                     | Description                                                       |
+|----------------------------|-------------------------------------------------------------------|
+| `WithConfig(cfg)`          | Connection and pool configuration                                 |
+| `WithClientID(id)`         | Human-readable client name prefix (UUID appended automatically)   |
+| `WithLogger(l)`            | Custom `slog.Logger`                                              |
+| `WithMarshaller(fn)`       | Custom marshal function for `SetStruct` (default: `json.Marshal`) |
+| `WithTLS(cfg)`             | TLS configuration                                                 |
+| `WithLimiter(l)`           | Rate limiter (standalone mode only)                               |
+| `WithTraceProvider(tp)`    | OpenTelemetry tracer provider                                     |
+| `WithMeterProvider(mp)`    | OpenTelemetry meter provider                                      |
+| `WithMetricsNamespace(ns)` | Prometheus metrics namespace                                      |
+| `WithDBStatement(on)`      | Include raw commands in traces                                    |
+| `WithDBSystem(s)`          | Override `db.system` attribute in traces and metrics              |
+| `WithAttributes(attrs...)` | Additional OpenTelemetry attributes for traces and metrics        |
 
 ## Configuration
 
-| ENV                           | Description                                                                                                                                                                                                                                                                 |
-|-------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| REDIS_NETWORK                 | The network type, either tcp or unix. Default is tcp.                                                                                                                                                                                                                       |
-| REDIS_ADDRS                   | A seed list of host:port addresses of cluster nodes.                                                                                                                                                                                                                        |
-| REDIS_PROTOCOL                | Protocol 2 or 3. Use the version to negotiate RESP version with redis-server. Default is 3.                                                                                                                                                                                 |
-| REDIS_USERNAME                | Use the specified Username to authenticate the current connection with one of the connections defined in the ACL list when connecting to a Redis 6.0 instance, or greater, that is using the Redis ACL system.                                                              |
-| REDIS_PASSWORD                | Optional password. Must match the password specified in the requirepass server configuration option (if connecting to a Redis 5.0 instance, or lower), or the User Password when connecting to a Redis 6.0 instance, or greater, that is using the Redis ACL system.        |
-| REDIS_DB                      | Database to be selected after connecting to the server.                                                                                                                                                                                                                     |
-| REDIS_MAX_REDIRECTS           | The maximum number of retries before giving up. Command is retried on network errors and MOVED/ASK redirects. Default is 3 retries.                                                                                                                                         |
-| REDIS_READONLY                | Enables read-only commands on slave nodes.                                                                                                                                                                                                                                  |
-| REDIS_ROUTE_BY_LATENCY        | Allows routing read-only commands to the closest master or slave node. It automatically enables ReadOnly.                                                                                                                                                                   |
-| REDIS_ROUTE_RANDOMLY          | Allows routing read-only commands to the random master or slave node. It automatically enables ReadOnly.                                                                                                                                                                    |
-| REDIS_MAX_RETRIES             | Maximum number of retries before giving up. Default is 3 retries; -1 (not 0) disables retries.                                                                                                                                                                              |
-| REDIS_MIN_RETRY_BACKOFF       | Minimum backoff between each retry. Default is 8 milliseconds; -1 disables backoff.                                                                                                                                                                                         |
-| REDIS_MAX_RETRY_BACKOFF       | Maximum backoff between each retry. Default is 512 milliseconds; -1 disables backoff.                                                                                                                                                                                       |
-| REDIS_DIAL_TIMEOUT            | Dial timeout for establishing new connections. Default is 5 seconds.                                                                                                                                                                                                        |
-| REDIS_READ_TIMEOUT            | Timeout for socket reads. If reached, commands will fail with a timeout instead of blocking. Supported values: `0` - default timeout (3 seconds), `-1` - no timeout (block indefinitely), `-2` - disables SetReadDeadline calls completely.                                 |
-| REDIS_WRITE_TIMEOUT           | Timeout for socket writes. If reached, commands will fail with a timeout instead of blocking. Supported values: `0` - default timeout (3 seconds), `-1` - no timeout (block indefinitely), `-2` - disables SetReadDeadline calls completely.                                |
-| REDIS_CONTEXT_TIMEOUT_ENABLED | ContextTimeoutEnabled controls whether the client respects context timeouts and deadlines. See https://redis.uptrace.dev/guide/go-redis-debugging.html#timeouts                                                                                                             |
-| REDIS_POOL_FIFO               | Type of connection pool. true for FIFO pool, false for LIFO pool. Note that FIFO has slightly higher overhead compared to LIFO, but it helps closing idle connections faster reducing the pool size.                                                                        |
-| REDIS_POOL_SIZE               | Base number of socket connections. Default is 10 connections per every available CPU as reported by runtime.GOMAXPROCS. If there is not enough connections in the pool, new connections will be allocated in excess of PoolSize, you can limit it through MaxActiveConns    |
-| REDIS_POOL_TIMEOUT            | Amount of time client waits for connection if all connections are busy before returning an error. Default is ReadTimeout + 1 second.                                                                                                                                        |
-| REDIS_MIN_IDLE_CONNS          | Minimum number of idle connections which is useful when establishing new connection is slow. Default is 0. the idle connections are not closed by default.                                                                                                                  |
-| REDIS_MAX_IDLE_CONNS          | Maximum number of idle connections. Default is 0. the idle connections are not closed by default.                                                                                                                                                                           |
-| REDIS_MAX_ACTIVE_CONNS        | Maximum number of connections allocated by the pool at a given time. When zero, there is no limit on the number of connections in the pool.                                                                                                                                 |
-| REDIS_CONN_MAX_IDLE_TIME      | Maximum amount of time a connection may be idle. Should be less than server's timeout. Expired connections may be closed lazily before reuse. If d <= 0, connections are not closed due to a connection's idle time. Default is 30 minutes. -1 disables idle timeout check. |
-| REDIS_CONN_MAX_LIFETIME       | Maximum amount of time a connection may be reused. Expired connections may be closed lazily before reuse. If <= 0, connections are not closed due to a connection's age.                                                                                                    |
-| REDIS_DISABLE_INDENTITY       | Disable set-lib on connect. Default is false.                                                                                                                                                                                                                               |
-| REDIS_UNSTABLE_RESP3          | Enable Unstable mode for Redis Search module with RESP3.                                                                                                                                                                                                                    |
+All fields can be set programmatically via `Config` or through environment variables.
+
+| Env variable                    | Default          | Description                                               |
+|---------------------------------|------------------|-----------------------------------------------------------|
+| `REDIS_ADDRS`                   | `127.0.0.1:6379` | Comma-separated list of `host:port` addresses             |
+| `REDIS_NETWORK`                 | `tcp`            | Network type: `tcp` or `unix`                             |
+| `REDIS_PROTOCOL`                | `3`              | RESP protocol version: `2` or `3`                         |
+| `REDIS_USERNAME`                | —                | ACL username (Redis 6+)                                   |
+| `REDIS_PASSWORD`                | —                | Password                                                  |
+| `REDIS_DB`                      | `0`              | Database index (standalone only)                          |
+| `REDIS_MAX_RETRIES`             | `3`              | Max retries; `-1` disables                                |
+| `REDIS_MIN_RETRY_BACKOFF`       | `8ms`            | Min backoff between retries; `-1` disables                |
+| `REDIS_MAX_RETRY_BACKOFF`       | `512ms`          | Max backoff between retries; `-1` disables                |
+| `REDIS_MAX_REDIRECTS`           | `len(nodes)+1`   | Max MOVED/ASK redirects (cluster only)                    |
+| `REDIS_READONLY`                | `true`           | Route read commands to replicas (cluster only)            |
+| `REDIS_ROUTE_BY_LATENCY`        | `false`          | Route reads to the nearest node (cluster only)            |
+| `REDIS_ROUTE_RANDOMLY`          | `false`          | Route reads to a random node (cluster only)               |
+| `REDIS_DIAL_TIMEOUT`            | `5s`             | Timeout for new connections                               |
+| `REDIS_READ_TIMEOUT`            | `3s`             | Socket read timeout; `-1` blocks; `-2` disables deadline  |
+| `REDIS_WRITE_TIMEOUT`           | `3s`             | Socket write timeout; `-1` blocks; `-2` disables deadline |
+| `REDIS_CONTEXT_TIMEOUT_ENABLED` | `false`          | Respect context deadlines for commands                    |
+| `REDIS_POOL_SIZE`               | `10×GOMAXPROCS`  | Connection pool size per node                             |
+| `REDIS_POOL_FIFO`               | `false`          | `true` = FIFO pool; `false` = LIFO                        |
+| `REDIS_POOL_TIMEOUT`            | `ReadTimeout+1s` | Wait time for a free connection                           |
+| `REDIS_MIN_IDLE_CONNS`          | `0`              | Minimum idle connections                                  |
+| `REDIS_MAX_IDLE_CONNS`          | `0`              | Maximum idle connections                                  |
+| `REDIS_MAX_ACTIVE_CONNS`        | `0` (unlimited)  | Maximum active connections per node                       |
+| `REDIS_CONN_MAX_IDLE_TIME`      | `30m`            | Max idle time per connection; `-1` disables               |
+| `REDIS_CONN_MAX_LIFETIME`       | unlimited        | Max lifetime per connection                               |
+| `REDIS_DISABLE_INDENTITY`       | `false`          | Disable `CLIENT SETNAME` on connect                       |
+| `REDIS_UNSTABLE_RESP3`          | `false`          | Enable unstable RESP3 mode for Redis Search               |
+
+## Error handling
+
+```go
+import "errors"
+
+val, ok, err := client.String(ctx, "key")
+if err != nil {
+// real error
+}
+if !ok {
+// key does not exist
+}
+
+err = client.HGetAll(ctx, "key", &dst)
+if errors.Is(err, redis.ErrKeyNotFound) {
+// key does not exist
+}
+```
+
+Exported errors:
+
+| Error                 | Description                               |
+|-----------------------|-------------------------------------------|
+| `ErrKeyNotFound`      | Key or field does not exist               |
+| `ErrInvalidFieldType` | Unsupported field type for hash operation |
+
+## License
+
+[MIT](LICENSE)
