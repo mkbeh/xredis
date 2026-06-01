@@ -65,9 +65,9 @@ More examples: [examples/sample](https://github.com/mkbeh/xredis/tree/main/examp
 
 ```go
 client, err := redis.NewClusterClient(
-redis.WithConfig(&redis.Config{
-Addrs: "node1:6379,node2:6379,node3:6379",
-}),
+    redis.WithConfig(&redis.Config{
+        Addrs: "node1:6379,node2:6379,node3:6379",
+    }),
 )
 ```
 
@@ -79,8 +79,8 @@ client.HSet(ctx, "user:1", "name", "Alice", time.Hour)
 
 // Set all fields from a struct
 type User struct {
-Name  string `redis:"name"`
-Email string `redis:"email"`
+    Name  string `redis:"name"`
+    Email string `redis:"email"`
 }
 client.HSetObject(ctx, "user:1", User{Name: "Alice", Email: "alice@example.com"}, time.Hour)
 
@@ -93,11 +93,11 @@ client.HGetAll(ctx, "user:1", &u)
 
 ```go
 client, err := redis.NewClient(
-redis.WithConfig(cfg),
-redis.WithTraceProvider(tp),
-redis.WithMeterProvider(mp),
-redis.WithMetricsNamespace("myapp"),
-redis.WithDBStatement(false), // hide raw commands from traces
+    redis.WithConfig(cfg),
+    redis.WithTraceProvider(tp),
+    redis.WithMeterProvider(mp),
+    redis.WithMetricsNamespace("myapp"),
+    redis.WithDBStatement(false), // hide raw commands from traces
 )
 ```
 
@@ -107,9 +107,9 @@ Prometheus metrics are registered automatically on client creation.
 
 ```go
 client, err := redis.NewClient(
-redis.WithConfig(cfg),
-redis.WithTLS(&tls.Config{
-MinVersion: tls.VersionTLS12,
+    redis.WithConfig(cfg),
+    redis.WithTLS(&tls.Config{
+    MinVersion: tls.VersionTLS12,
 }),
 )
 ```
@@ -172,15 +172,15 @@ import "errors"
 
 val, ok, err := client.String(ctx, "key")
 if err != nil {
-// real error
+    // real error
 }
 if !ok {
-// key does not exist
+    // key does not exist
 }
 
 err = client.HGetAll(ctx, "key", &dst)
 if errors.Is(err, redis.ErrKeyNotFound) {
-// key does not exist
+    // key does not exist
 }
 ```
 
