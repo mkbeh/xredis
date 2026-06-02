@@ -1,5 +1,8 @@
 # xredis
 
+![Go Version](https://img.shields.io/badge/go-1.26+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A Go Redis client wrapper built on [go-redis](https://github.com/redis/go-redis) with built-in OpenTelemetry tracing,
 Prometheus metrics, and support for both standalone and cluster modes.
 
