@@ -4,7 +4,6 @@
 
 **Lightweight Redis wrapper for Go, built on top of [go-redis](https://github.com/redis/go-redis).**
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/mkbeh/xredis.svg)](https://pkg.go.dev/github.com/mkbeh/xredis)
 ![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
