@@ -243,7 +243,7 @@ type Config struct {
 	ConnMaxLifetime time.Duration `envconfig:"REDIS_CONN_MAX_LIFETIME"`
 
 	// Disable set-lib on connect. Default is false.
-	DisableIndentity bool `envconfig:"REDIS_DISABLE_INDENTITY"`
+	DisableIndentity bool `envconfig:"REDIS_DISABLE_IDENTITY"`
 
 	// Enable Unstable mode for Redis Search module with RESP3.
 	UnstableResp3 bool `envconfig:"REDIS_UNSTABLE_RESP3"`
