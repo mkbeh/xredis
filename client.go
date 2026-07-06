@@ -10,9 +10,9 @@ import (
 
 // Client is an opinionated Redis client wrapper.
 type Client struct {
-	conn       rdb.UniversalClient
-	logger     *slog.Logger
-	marshaller MarshallerFunc
+	conn   rdb.UniversalClient
+	codec  Codec
+	logger *slog.Logger
 }
 
 // NewClient creates a standalone Redis client.
@@ -102,9 +102,9 @@ func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
 	)
 
 	return &Client{
-		conn:       conn,
-		logger:     logger,
-		marshaller: opts.marshaller,
+		conn:   conn,
+		codec:  opts.codec,
+		logger: logger,
 	}, nil
 }
 

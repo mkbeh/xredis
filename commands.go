@@ -164,12 +164,26 @@ func (c *Client) Set(ctx context.Context, key string, val any, expiration time.D
 
 // SetStruct marshals val and stores it using Redis SET command.
 func (c *Client) SetStruct(ctx context.Context, key string, val any, expiration time.Duration) error {
-	data, err := c.marshaller(val)
+	data, err := c.codec.Marshal(val)
 	if err != nil {
 		return err
 	}
 
 	return c.conn.Set(ctx, key, data, expiration).Err()
+}
+
+// GetStruct reads a Redis string value and unmarshals it into dst.
+func (c *Client) GetStruct(ctx context.Context, key string, dst any) error {
+	data, err := c.conn.Get(ctx, key).Bytes()
+	if err != nil {
+		if errors.Is(err, rdb.Nil) {
+			return ErrKeyNotFound
+		}
+
+		return err
+	}
+
+	return c.codec.Unmarshal(data, dst)
 }
 
 // Bool reads a Redis string value as bool.

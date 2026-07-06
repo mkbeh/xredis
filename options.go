@@ -3,7 +3,6 @@ package xredis
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -18,9 +17,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// MarshallerFunc encodes values before storing them in Redis.
-type MarshallerFunc func(value any) ([]byte, error)
 
 // Option configures xredis Client construction.
 type Option interface {
@@ -44,7 +40,7 @@ type options struct {
 	tls         *tls.Config
 	logger      *slog.Logger
 	limiter     rdb.Limiter
-	marshaller  MarshallerFunc
+	codec       Codec
 	credentials credentialsOptions
 
 	// Connection hooks.
@@ -77,8 +73,8 @@ type credentialsOptions struct {
 
 func newOptions(opts ...Option) *options {
 	options := &options{
-		logger:     slog.Default(),
-		marshaller: json.Marshal,
+		logger: slog.Default(),
+		codec:  JSONCodec{},
 	}
 
 	for _, opt := range opts {
@@ -95,8 +91,8 @@ func newOptions(opts ...Option) *options {
 		options.logger = slog.Default()
 	}
 
-	if options.marshaller == nil {
-		options.marshaller = json.Marshal
+	if options.codec == nil {
+		options.codec = JSONCodec{}
 	}
 
 	return options
@@ -232,7 +228,7 @@ func WithIdentitySuffix(suffix string) Option {
 	})
 }
 
-// WithLogger configures logger used by xredis.
+// WithLogger configures logger.
 func WithLogger(logger *slog.Logger) Option {
 	return optionFunc(func(opts *options) {
 		if logger != nil {
@@ -243,11 +239,11 @@ func WithLogger(logger *slog.Logger) Option {
 
 // Encoding options.
 
-// WithMarshaller configures value marshaller used by xredis.
-func WithMarshaller(fn MarshallerFunc) Option {
+// WithCodec configures value codec.
+func WithCodec(codec Codec) Option {
 	return optionFunc(func(opts *options) {
-		if fn != nil {
-			opts.marshaller = fn
+		if codec != nil {
+			opts.codec = codec
 		}
 	})
 }
