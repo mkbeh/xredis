@@ -27,3 +27,4 @@ go.work.sum
 # ide
 .vscode
 .idea
+/_tmp/

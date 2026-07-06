@@ -1,0 +1,98 @@
+services:
+  redis-standalone:
+    image: redis:alpine
+    container_name: sample-redis
+    profiles:
+      - standalone
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-standalone-data:/data
+    networks:
+      - sample-network
+
+  redis-ring-1:
+    image: redis:alpine
+    container_name: sample-redis-ring-1
+    profiles:
+      - ring
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-ring-1-data:/data
+    networks:
+      - sample-network
+
+  redis-ring-2:
+    image: redis:alpine
+    container_name: sample-redis-ring-2
+    profiles:
+      - ring
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6382:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-ring-2-data:/data
+    networks:
+      - sample-network
+
+  redis-ring-3:
+    image: redis:alpine
+    container_name: sample-redis-ring-3
+    profiles:
+      - ring
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6383:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-ring-3-data:/data
+    networks:
+      - sample-network
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: sample-redisinsight
+    profiles:
+      - standalone
+      - ring
+      - sentinel
+      - cluster
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight-data:/data
+    networks:
+      - sample-network
+
+volumes:
+  redis-standalone-data:
+  redis-ring-1-data:
+  redis-ring-2-data:
+  redis-ring-3-data:
+  redisinsight-data:
+
+networks:
+  sample-network:
+    driver: bridge
