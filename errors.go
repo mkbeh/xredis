@@ -8,4 +8,8 @@ var (
 	ErrInvalidHashObject = errors.New("invalid hash object")
 	ErrInvalidTTL        = errors.New("invalid ttl")
 	ErrInvalidConfig     = errors.New("invalid redis config")
+
+	ErrInvalidCache       = errors.New("invalid cache")
+	ErrInvalidCacheEntry  = errors.New("invalid cache entry")
+	ErrInvalidCacheLoader = errors.New("invalid cache loader")
 )
