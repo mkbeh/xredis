@@ -41,4 +41,7 @@ var (
 
 	// ErrInvalidRateLimit is returned when rate limit configuration is invalid.
 	ErrInvalidRateLimit = errors.New("invalid rate limit")
+
+	// ErrInvalidScan is returned when scan options or handler are invalid.
+	ErrInvalidScan = errors.New("invalid scan")
 )
