@@ -8,19 +8,6 @@ import (
 	rdb "github.com/redis/go-redis/v9"
 )
 
-// lockUnlockScript atomically releases a lock only if the stored owner token
-// matches the caller token.
-//
-// KEYS[1] - lock key
-// ARGV[1] - owner token
-var lockUnlockScript = rdb.NewScript(`
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-	return redis.call("DEL", KEYS[1])
-end
-
-return 0
-`)
-
 // lockExtendScript atomically extends a lock only if the stored owner token
 // matches the caller token.
 //
@@ -109,12 +96,12 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		return err
 	}
 
-	deleted, err := lockUnlockScript.Run(ctx, l.client.conn, []string{l.key}, l.token).Int64()
+	deleted, err := l.client.CompareAndDelete(ctx, l.key, l.token)
 	if err != nil {
 		return err
 	}
 
-	if deleted == 0 {
+	if !deleted {
 		return ErrLockNotOwned
 	}
 
