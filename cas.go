@@ -156,7 +156,7 @@ func (c *Client) compareAndSwap(
 		[]string{key},
 		expected,
 		value,
-		ttlToMs(expiration),
+		durationToMs(expiration),
 	).Int64()
 	if err != nil {
 		return false, err

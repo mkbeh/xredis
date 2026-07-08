@@ -35,4 +35,10 @@ var (
 
 	// ErrInvalidLock is returned when a lock, lock key, owner token, or client is invalid.
 	ErrInvalidLock = errors.New("invalid lock")
+
+	// ErrInvalidRateLimiter is returned when a rate limiter is invalid or misconfigured.
+	ErrInvalidRateLimiter = errors.New("invalid rate limiter")
+
+	// ErrInvalidRateLimit is returned when rate limit configuration is invalid.
+	ErrInvalidRateLimit = errors.New("invalid rate limit")
 )

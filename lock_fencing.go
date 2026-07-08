@@ -222,8 +222,8 @@ func (c *Client) TryFencedLockWithToken(
 		c.conn,
 		[]string{key, fencingKey},
 		token,
-		ttlToMs(ttl),
-		ttlToMs(options.counterTTL),
+		durationToMs(ttl),
+		durationToMs(options.counterTTL),
 	).Slice()
 	if err != nil {
 		return nil, false, err
@@ -281,8 +281,8 @@ func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error
 		l.lock.client.conn,
 		[]string{l.lock.key, l.fencingKey},
 		l.lock.token,
-		ttlToMs(ttl),
-		ttlToMs(l.counterTTL),
+		durationToMs(ttl),
+		durationToMs(l.counterTTL),
 	).Int64()
 	if err != nil {
 		return false, err

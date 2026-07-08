@@ -121,7 +121,7 @@ func (l *Lock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
 		return false, ErrInvalidTTL
 	}
 
-	extended, err := lockExtendScript.Run(ctx, l.client.conn, []string{l.key}, l.token, ttlToMs(ttl)).Int64()
+	extended, err := lockExtendScript.Run(ctx, l.client.conn, []string{l.key}, l.token, durationToMs(ttl)).Int64()
 	if err != nil {
 		return false, err
 	}
@@ -135,13 +135,4 @@ func (l *Lock) validate() error {
 	}
 
 	return nil
-}
-
-func ttlToMs(ttl time.Duration) int64 {
-	ms := ttl / time.Millisecond
-	if ttl%time.Millisecond != 0 {
-		ms++
-	}
-
-	return int64(ms)
 }
