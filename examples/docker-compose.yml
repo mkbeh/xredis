@@ -4,11 +4,11 @@ services:
     container_name: sample-redis
     profiles:
       - standalone
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -22,11 +22,11 @@ services:
     container_name: sample-redis-ring-1
     profiles:
       - ring
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     ports:
       - "6381:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -40,11 +40,11 @@ services:
     container_name: sample-redis-ring-2
     profiles:
       - ring
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     ports:
       - "6382:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -58,16 +58,185 @@ services:
     container_name: sample-redis-ring-3
     profiles:
       - ring
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     ports:
       - "6383:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 20
     volumes:
       - redis-ring-3-data:/data
+    networks:
+      - sample-network
+
+  redis-sentinel:
+    image: redis:alpine
+    container_name: sample-redis-sentinel
+    profiles:
+      - sentinel
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p \
+          /data/master \
+          /data/replica-1 \
+          /data/replica-2 \
+          /data/sentinel-26379 \
+          /data/sentinel-26380 \
+          /data/sentinel-26381
+
+        echo "Starting Redis master..."
+
+        redis-server \
+          --port 6390 \
+          --appendonly yes \
+          --dir /data/master \
+          --protected-mode no &
+
+        echo "Starting Redis replicas..."
+
+        redis-server \
+          --port 6391 \
+          --replicaof 127.0.0.1 6390 \
+          --appendonly yes \
+          --dir /data/replica-1 \
+          --protected-mode no &
+
+        redis-server \
+          --port 6392 \
+          --replicaof 127.0.0.1 6390 \
+          --appendonly yes \
+          --dir /data/replica-2 \
+          --protected-mode no &
+
+        for port in 6390 6391 6392; do
+          echo "Waiting for Redis node on port $${port}..."
+
+          until redis-cli -p "$${port}" ping >/dev/null 2>&1; do
+            sleep 1
+          done
+        done
+
+        for port in 26379 26380 26381; do
+          echo "Creating Sentinel config for port $${port}..."
+
+          mkdir -p "/data/sentinel-$${port}"
+
+          printf '%s\n' \
+            "port $${port}" \
+            "dir /data/sentinel-$${port}" \
+            "protected-mode no" \
+            "sentinel monitor sample-master 127.0.0.1 6390 2" \
+            "sentinel down-after-milliseconds sample-master 5000" \
+            "sentinel failover-timeout sample-master 10000" \
+            "sentinel parallel-syncs sample-master 1" \
+            > "/data/sentinel-$${port}/sentinel.conf"
+
+          echo "Starting Sentinel on port $${port}..."
+
+          redis-server "/data/sentinel-$${port}/sentinel.conf" --sentinel &
+        done
+
+        echo "Waiting for Sentinel..."
+
+        until redis-cli -p 26379 ping >/dev/null 2>&1; do
+          sleep 1
+        done
+
+        echo "Sentinel master:"
+        redis-cli -p 26379 sentinel get-master-addr-by-name sample-master
+
+        echo "Sentinel replicas:"
+        redis-cli -p 26379 sentinel replicas sample-master
+
+        wait
+    ports:
+      - "6390:6390"
+      - "6391:6391"
+      - "6392:6392"
+      - "26379:26379"
+      - "26380:26380"
+      - "26381:26381"
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-sentinel-data:/data
+    networks:
+      - sample-network
+
+  redis-cluster:
+    image: redis:alpine
+    container_name: sample-redis-cluster
+    profiles:
+      - cluster
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /data/7000 /data/7001 /data/7002
+
+        for port in 7000 7001 7002; do
+          echo "Starting Redis Cluster node on port $${port}"
+
+          redis-server \
+            --port "$${port}" \
+            --cluster-enabled yes \
+            --cluster-config-file nodes.conf \
+            --cluster-node-timeout 5000 \
+            --appendonly yes \
+            --dir "/data/$${port}" \
+            --protected-mode no \
+            --cluster-announce-ip 127.0.0.1 \
+            --cluster-announce-port "$${port}" \
+            --cluster-announce-bus-port "1$${port}" &
+        done
+
+        for port in 7000 7001 7002; do
+          echo "Waiting for Redis node on port $${port}..."
+
+          until redis-cli -p "$${port}" ping >/dev/null 2>&1; do
+            sleep 1
+          done
+        done
+
+        if ! redis-cli -p 7000 cluster info | grep -q "cluster_state:ok"; then
+          echo "Creating Redis Cluster..."
+
+          redis-cli --cluster create \
+            127.0.0.1:7000 \
+            127.0.0.1:7001 \
+            127.0.0.1:7002 \
+            --cluster-replicas 0 \
+            --cluster-yes
+        fi
+
+        echo "Redis Cluster nodes:"
+        redis-cli -p 7000 cluster nodes
+
+        echo "Redis Cluster info:"
+        redis-cli -p 7000 cluster info
+
+        wait
+    ports:
+      - "7000:7000"
+      - "7001:7001"
+      - "7002:7002"
+      - "17000:17000"
+      - "17001:17001"
+      - "17002:17002"
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli -p 7000 cluster info | grep -q 'cluster_state:ok'" ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - redis-cluster-data:/data
     networks:
       - sample-network
 
@@ -91,6 +260,8 @@ volumes:
   redis-ring-1-data:
   redis-ring-2-data:
   redis-ring-3-data:
+  redis-sentinel-data:
+  redis-cluster-data:
   redisinsight-data:
 
 networks:

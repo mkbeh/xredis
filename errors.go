@@ -44,4 +44,7 @@ var (
 
 	// ErrInvalidScan is returned when scan options or handler are invalid.
 	ErrInvalidScan = errors.New("invalid scan")
+
+	// ErrInvalidPipeline is returned when pipeline input or configuration is invalid.
+	ErrInvalidPipeline = errors.New("invalid pipeline")
 )

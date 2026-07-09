@@ -306,29 +306,6 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.conn.Del(ctx, key).Err()
 }
 
-// MassDelete deletes keys using pipeline.
-func (c *Client) MassDelete(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-
-	cmders, err := c.conn.Pipelined(ctx, func(pipe rdb.Pipeliner) error {
-		pipe.Del(ctx, keys...)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, cmder := range cmders {
-		if err = cmder.Err(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func validateRedisScalar(value any) error {
 	v := reflect.ValueOf(value)
 	if !v.IsValid() {

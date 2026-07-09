@@ -2,6 +2,7 @@ package xredis
 
 import (
 	"context"
+	"sync"
 
 	rdb "github.com/redis/go-redis/v9"
 )
@@ -17,19 +18,13 @@ type ScanHandler func(ctx context.Context, key string) error
 // does not guarantee that every batch contains exactly Count keys.
 type ScanBatchHandler func(ctx context.Context, keys []string) error
 
-type scanRemoveMode uint8
-
-const (
-	scanRemoveModeDelete scanRemoveMode = iota
-	scanRemoveModeUnlink
-)
-
 // ScanOptions configures Redis SCAN.
 type ScanOptions struct {
 	// Cursor is the Redis SCAN cursor.
 	//
 	// Use zero to start a new scan.
-	// Cursor is used only by Scan. ScanEach and ScanAll always start from zero.
+	// Cursor is used only by Scan.
+	// ScanEach, ScanEachBatch and ScanAll always start from zero.
 	Cursor uint64
 
 	// Match filters keys by Redis glob-style pattern.
@@ -58,7 +53,7 @@ type ScanOptions struct {
 // Count is a hint, not a strict result limit.
 //
 // For full scans, prefer ScanEach. For large keyspaces, avoid KEYS.
-// For Redis Cluster clients, use ScanEach or ScanAll for cluster-wide scans.
+// For Redis Cluster and Ring clients, use ScanEach or ScanAll for topology-wide scans.
 func (c *Client) Scan(ctx context.Context, opts ScanOptions) ([]string, uint64, error) {
 	if err := validateScan(c, opts); err != nil {
 		return nil, 0, err
@@ -77,8 +72,12 @@ func (c *Client) Scan(ctx context.Context, opts ScanOptions) ([]string, uint64, 
 func (c *Client) ScanAll(ctx context.Context, opts ScanOptions) ([]string, error) {
 	keys := make([]string, 0, defaultScanAllCapacity)
 
+	var mu sync.Mutex
+
 	err := c.ScanEachBatch(ctx, opts, func(_ context.Context, batch []string) error {
+		mu.Lock()
 		keys = append(keys, batch...)
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {
@@ -119,8 +118,13 @@ func (c *Client) ScanEach(ctx context.Context, opts ScanOptions, fn ScanHandler)
 // ScanEachBatch always starts from cursor 0. The Cursor option is ignored.
 // Use Scan for cursor-based pagination.
 //
-// For Redis Cluster clients, ScanEachBatch scans each master node. Each master
-// node is scanned from cursor 0 because SCAN cursors are node-local.
+// For Redis Cluster clients, ScanEachBatch scans each master node.
+// For Redis Ring clients, ScanEachBatch scans each live shard.
+// Each node is scanned from cursor 0 because SCAN cursors are node-local.
+//
+// For Redis Cluster and Ring clients, fn may be called concurrently from
+// different nodes or shards. Handlers that mutate shared state must synchronize
+// access themselves.
 //
 // SCAN can return duplicate keys. Handlers should be safe to call more than
 // once for the same key.
@@ -133,27 +137,37 @@ func (c *Client) ScanEachBatch(ctx context.Context, opts ScanOptions, fn ScanBat
 		return ErrInvalidScan
 	}
 
-	scanOpts := opts
-	scanOpts.Cursor = 0
+	opts.Cursor = 0
 
-	if cluster, ok := c.conn.(*rdb.ClusterClient); ok {
-		return cluster.ForEachMaster(ctx, func(ctx context.Context, client *rdb.Client) error {
-			nodeOpts := scanOpts
-			nodeOpts.Cursor = 0
+	var forEachNode func(context.Context, func(context.Context, *rdb.Client) error) error
 
-			return scanNode(ctx, client, nodeOpts, fn)
-		})
+	switch client := c.conn.(type) {
+	case *rdb.ClusterClient:
+		forEachNode = client.ForEachMaster
+
+	case *rdb.Ring:
+		forEachNode = client.ForEachShard
+
+	default:
+		return scanNode(ctx, c.conn, opts, fn)
 	}
 
-	return scanNode(ctx, c.conn, scanOpts, fn)
+	return forEachNode(ctx, func(nodeCtx context.Context, client *rdb.Client) error {
+		nodeOpts := opts
+		nodeOpts.Cursor = 0
+
+		return scanNode(nodeCtx, client, nodeOpts, fn)
+	})
 }
 
 // ScanDelete deletes all Redis keys matching options using DEL.
 //
-// For Redis Cluster clients, deletion is executed as pipelined single-key DEL
-// commands to avoid multi-key hash-slot constraints.
+// For Redis Cluster and Ring clients, deletion is executed as pipelined
+// single-key DEL commands to avoid multi-key hash-slot constraints.
 func (c *Client) ScanDelete(ctx context.Context, opts ScanOptions) error {
-	return c.scanRemove(ctx, opts, scanRemoveModeDelete)
+	return c.ScanEachBatch(ctx, opts, func(ctx context.Context, keys []string) error {
+		return c.DeleteMany(ctx, keys)
+	})
 }
 
 // ScanUnlink unlinks all Redis keys matching options using UNLINK.
@@ -161,10 +175,12 @@ func (c *Client) ScanDelete(ctx context.Context, opts ScanOptions) error {
 // UNLINK removes keys from the keyspace and reclaims memory asynchronously,
 // which is preferable for large values.
 //
-// For Redis Cluster clients, unlinking is executed as pipelined single-key
-// UNLINK commands to avoid multi-key hash-slot constraints.
+// For Redis Cluster and Ring clients, unlinking is executed as pipelined
+// single-key UNLINK commands to avoid multi-key hash-slot constraints.
 func (c *Client) ScanUnlink(ctx context.Context, opts ScanOptions) error {
-	return c.scanRemove(ctx, opts, scanRemoveModeUnlink)
+	return c.ScanEachBatch(ctx, opts, func(ctx context.Context, keys []string) error {
+		return c.UnlinkMany(ctx, keys)
+	})
 }
 
 type keyScanner interface {
@@ -178,23 +194,18 @@ func scanNode(
 	opts ScanOptions,
 	fn ScanBatchHandler,
 ) error {
-	cursor := opts.Cursor
-
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		pageOpts := opts
-		pageOpts.Cursor = cursor
-
-		keys, nextCursor, err := scanPage(ctx, client, pageOpts)
+		keys, nextCursor, err := scanPage(ctx, client, opts)
 		if err != nil {
 			return err
 		}
 
 		if len(keys) > 0 {
-			if err = fn(ctx, keys); err != nil {
+			if err := fn(ctx, keys); err != nil {
 				return err
 			}
 		}
@@ -203,43 +214,20 @@ func scanNode(
 			return nil
 		}
 
-		cursor = nextCursor
+		opts.Cursor = nextCursor
 	}
 }
 
 func scanPage(ctx context.Context, client keyScanner, opts ScanOptions) ([]string, uint64, error) {
+	var cmd *rdb.ScanCmd
+
 	if opts.Type != "" {
-		return client.ScanType(ctx, opts.Cursor, opts.Match, opts.Count, opts.Type).Result()
+		cmd = client.ScanType(ctx, opts.Cursor, opts.Match, opts.Count, opts.Type)
+	} else {
+		cmd = client.Scan(ctx, opts.Cursor, opts.Match, opts.Count)
 	}
 
-	return client.Scan(ctx, opts.Cursor, opts.Match, opts.Count).Result()
-}
-
-func (c *Client) scanRemove(ctx context.Context, opts ScanOptions, mode scanRemoveMode) error {
-	return c.ScanEachBatch(ctx, opts, func(ctx context.Context, keys []string) error {
-		return c.scanRemoveBatch(ctx, keys, mode)
-	})
-}
-
-func (c *Client) scanRemoveBatch(ctx context.Context, keys []string, mode scanRemoveMode) error {
-	if len(keys) == 0 {
-		return nil
-	}
-
-	_, err := c.conn.Pipelined(ctx, func(pipe rdb.Pipeliner) error {
-		for _, key := range keys {
-			switch mode {
-			case scanRemoveModeDelete:
-				pipe.Del(ctx, key)
-			case scanRemoveModeUnlink:
-				pipe.Unlink(ctx, key)
-			}
-		}
-
-		return nil
-	})
-
-	return err
+	return cmd.Result()
 }
 
 func validateScan(client *Client, opts ScanOptions) error {
