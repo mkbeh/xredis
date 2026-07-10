@@ -39,6 +39,12 @@ const (
 	cacheNegative
 )
 
+// cacheLoadResult preserves the concrete generic type when a loaded value is
+// passed through singleflight as any.
+type cacheLoadResult[T any] struct {
+	value T
+}
+
 // Loader loads a value when it is missing from cache.
 //
 // On success, it should return a value and nil error.
@@ -227,7 +233,10 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 	}
 
 	ch := c.group.DoChan(c.key(key), func() (any, error) {
-		return c.load(ctx, key, loader)
+		value, err := c.load(ctx, key, loader)
+		return cacheLoadResult[T]{
+			value: value,
+		}, err
 	})
 
 	select {
@@ -239,12 +248,12 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 			return zero, result.Err
 		}
 
-		value, ok := result.Val.(T)
+		loaded, ok := result.Val.(cacheLoadResult[T])
 		if !ok {
 			return zero, ErrInvalidCacheEntry
 		}
 
-		return value, nil
+		return loaded.value, nil
 	}
 }
 
@@ -346,6 +355,10 @@ func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 
 	switch data[0] {
 	case cacheNegativeMarker:
+		if len(data) != 1 {
+			return zero, cacheMiss, ErrInvalidCacheEntry
+		}
+
 		return zero, cacheNegative, nil
 
 	case cacheValueMarker:

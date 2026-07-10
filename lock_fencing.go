@@ -92,15 +92,15 @@ func newFencedLockOptions(opts ...FencedLockOption) fencedLockOptions {
 }
 
 func validateFencedLockTTL(lockTTL, counterTTL time.Duration) error {
-	if lockTTL <= 0 {
+	if lockTTL <= 0 || counterTTL < 0 {
 		return ErrInvalidTTL
 	}
 
-	if counterTTL < 0 {
-		return ErrInvalidTTL
+	if counterTTL == 0 {
+		return nil
 	}
 
-	if counterTTL > 0 && counterTTL <= lockTTL {
+	if durationToMs(counterTTL) <= durationToMs(lockTTL) {
 		return ErrInvalidTTL
 	}
 

@@ -2,7 +2,6 @@ package xredis
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
@@ -10,9 +9,8 @@ import (
 
 // Client is an opinionated Redis client wrapper.
 type Client struct {
-	conn   rdb.UniversalClient
-	codec  Codec
-	logger *slog.Logger
+	conn  rdb.UniversalClient
+	codec Codec
 }
 
 // NewClient creates a standalone Redis client.
@@ -96,15 +94,9 @@ func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
 		return nil, err
 	}
 
-	logger := opts.logger.With(
-		slog.String("component", "redis"),
-		slog.String("client_id", opts.clientID),
-	)
-
 	return &Client{
-		conn:   conn,
-		codec:  opts.codec,
-		logger: logger,
+		conn:  conn,
+		codec: opts.codec,
 	}, nil
 }
 

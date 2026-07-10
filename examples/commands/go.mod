@@ -1,4 +1,4 @@
-module sample
+module commands
 
 go 1.26
 

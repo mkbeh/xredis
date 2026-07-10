@@ -38,6 +38,8 @@ var (
 	sampleOrderIDs = []string{"42", "7", "100"}
 )
 
+var errLockNotAcquired = errors.New("lock not acquired")
+
 type unlocker interface {
 	Unlock(ctx context.Context) error
 }
@@ -83,7 +85,7 @@ func simpleLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !acquired {
-		writeError(w, http.StatusConflict, xredis.ErrLockNotAcquired)
+		writeError(w, http.StatusConflict, errLockNotAcquired)
 		return
 	}
 	defer unlockSafely(lock)
@@ -112,7 +114,7 @@ func extendLockHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !acquired {
-		writeError(w, http.StatusConflict, xredis.ErrLockNotAcquired)
+		writeError(w, http.StatusConflict, errLockNotAcquired)
 		return
 	}
 	defer unlockSafely(lock)
@@ -165,7 +167,7 @@ func fencedLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !acquired {
-		writeError(w, http.StatusConflict, xredis.ErrLockNotAcquired)
+		writeError(w, http.StatusConflict, errLockNotAcquired)
 		return
 	}
 	defer unlockSafely(lock)
@@ -213,7 +215,7 @@ func staleFencingTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !acquired {
-		writeError(w, http.StatusConflict, xredis.ErrLockNotAcquired)
+		writeError(w, http.StatusConflict, errLockNotAcquired)
 		return
 	}
 
@@ -237,7 +239,7 @@ func staleFencingTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !acquired {
-		writeError(w, http.StatusConflict, xredis.ErrLockNotAcquired)
+		writeError(w, http.StatusConflict, errLockNotAcquired)
 		return
 	}
 	defer unlockSafely(secondLock)

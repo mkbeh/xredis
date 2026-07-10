@@ -41,6 +41,11 @@ type userProfile struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type userSettings struct {
+	Theme         string `json:"theme"`
+	Notifications bool   `json:"notifications"`
+}
+
 type sampleValue struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
@@ -147,7 +152,7 @@ func main() {
 	}
 	defer func() {
 		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
+			log.Println("unable to close Redis client:", closeErr)
 		}
 	}()
 
@@ -177,16 +182,39 @@ func main() {
 }
 
 func seedSample(ctx context.Context, id string) ([]string, error) {
-	items := sampleSetItems(id)
-
-	if err := client.SetMany(ctx, items); err != nil {
+	rawItems := sampleRawSetItems(id)
+	if err := client.SetMany(ctx, rawItems); err != nil {
 		return nil, err
 	}
 
-	return setItemKeys(items), nil
+	structItems := sampleStructSetItems(id)
+	if err := client.SetStructMany(ctx, structItems); err != nil {
+		return nil, err
+	}
+
+	keys := make([]string, 0, len(rawItems)+len(structItems))
+	keys = append(keys, setItemKeys(rawItems)...)
+	keys = append(keys, setItemKeys(structItems)...)
+
+	return keys, nil
 }
 
-func sampleSetItems(id string) []xredis.SetItem {
+func sampleRawSetItems(id string) []xredis.SetItem {
+	return []xredis.SetItem{
+		{
+			Key:        messageKey(id),
+			Value:      "hello from xredis pipeline example",
+			Expiration: sampleTTL,
+		},
+		{
+			Key:        counterKey(id),
+			Value:      100,
+			Expiration: sampleTTL,
+		},
+	}
+}
+
+func sampleStructSetItems(id string) []xredis.SetItem {
 	items := []xredis.SetItem{
 		{
 			Key: profileKey(id),
@@ -200,15 +228,10 @@ func sampleSetItems(id string) []xredis.SetItem {
 		},
 		{
 			Key: settingsKey(id),
-			Value: map[string]any{
-				"theme":         "dark",
-				"notifications": true,
+			Value: userSettings{
+				Theme:         "dark",
+				Notifications: true,
 			},
-			Expiration: sampleTTL,
-		},
-		{
-			Key:        counterKey(id),
-			Value:      100,
 			Expiration: sampleTTL,
 		},
 	}
@@ -251,7 +274,7 @@ func setItemKeys(items []xredis.SetItem) []string {
 }
 
 func cleanupKeys() []string {
-	keys := make([]string, 0, len(sampleIDs)*13)
+	keys := make([]string, 0, len(sampleIDs)*14)
 
 	for _, id := range sampleIDs {
 		keys = append(keys, sampleKeys(id)...)
@@ -262,9 +285,10 @@ func cleanupKeys() []string {
 
 func sampleKeys(id string) []string {
 	keys := []string{
+		messageKey(id),
+		counterKey(id),
 		profileKey(id),
 		settingsKey(id),
-		counterKey(id),
 	}
 
 	keys = append(keys, deleteKeys(id)...)
@@ -291,6 +315,10 @@ func unlinkKeys(id string) []string {
 	}
 
 	return keys
+}
+
+func messageKey(id string) string {
+	return samplePrefix + "message:" + id
 }
 
 func profileKey(id string) string {

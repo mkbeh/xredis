@@ -23,9 +23,9 @@ func (c *Client) HExists(ctx context.Context, key, field string) (bool, error) {
 	return c.conn.HExists(ctx, key, field).Result()
 }
 
-// HIncrBy increments the number stored at field in the hash stored at key by increment.
-func (c *Client) HIncrBy(ctx context.Context, key, field string, incr int64) error {
-	return c.conn.HIncrBy(ctx, key, field, incr).Err()
+// HIncrBy increments a hash field and returns the updated value.
+func (c *Client) HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) {
+	return c.conn.HIncrBy(ctx, key, field, incr).Result()
 }
 
 // HGetAll returns all fields and values of the hash stored at key and scans the result into dst.
@@ -438,14 +438,14 @@ func (c *Client) String(ctx context.Context, key string) (val string, ok bool, e
 	return val, true, nil
 }
 
-// Incr increments the integer value stored at key.
-func (c *Client) Incr(ctx context.Context, key string) error {
-	return c.conn.Incr(ctx, key).Err()
+// Incr increments an integer value and returns the updated value.
+func (c *Client) Incr(ctx context.Context, key string) (int64, error) {
+	return c.conn.Incr(ctx, key).Result()
 }
 
-// Decr decrements the integer value stored at key.
-func (c *Client) Decr(ctx context.Context, key string) error {
-	return c.conn.Decr(ctx, key).Err()
+// Decr decrements an integer value and returns the updated value.
+func (c *Client) Decr(ctx context.Context, key string) (int64, error) {
+	return c.conn.Decr(ctx, key).Result()
 }
 
 // Delete deletes key.

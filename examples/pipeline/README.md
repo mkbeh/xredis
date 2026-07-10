@@ -4,7 +4,8 @@ This example shows how to use Redis pipeline helpers with `xredis`.
 
 **This example demonstrates:**
 
-* Batch writes with `SetMany`
+* Raw batch writes with `SetMany`
+* Codec-based batch writes with `SetStructMany`
 * Batch deletion with `DeleteMany`
 * Batch unlinking with `UnlinkMany`
 
@@ -82,7 +83,8 @@ curl 'localhost:8080/healthz'
 
 ## Seed sample keys
 
-Creates profile, settings, counter, delete, and unlink sample keys using `SetMany`.
+Creates raw message and counter values with `SetMany`, then creates profile,
+settings, delete, and unlink values with `SetStructMany`.
 
 ```shell
 curl -X POST 'localhost:8080/sample/42'
@@ -97,7 +99,11 @@ curl -X POST 'localhost:8080/sample/100'
 
 You can inspect created keys in RedisInsight with the `xredis:pipeline:` prefix.
 
-Values are stored through the configured `xredis` codec. With the default JSON codec, sample structs and maps are stored as JSON objects, and counters are stored as JSON numbers.
+`SetMany` passes raw values directly to Redis. In this example it stores a
+string and an integer.
+
+`SetStructMany` encodes values with the configured `xredis` codec. With the
+default JSON codec, the sample structs are stored as JSON objects.
 
 ## Delete many keys
 
@@ -131,11 +137,18 @@ curl -X DELETE 'localhost:8080/sample'
 
 ## Redis Cluster note
 
-`SetMany`, `DeleteMany`, and `UnlinkMany` are safe to use with Redis Cluster and Ring clients.
+`SetMany`, `SetStructMany`, `DeleteMany`, and `UnlinkMany` support standalone
+Redis, Redis Cluster, and Ring clients.
 
-`SetMany` writes values as independent single-key `SET` commands.
+`SetMany` and `SetStructMany` write values as independent single-key `SET`
+commands.
 
-For standalone Redis, `DeleteMany` and `UnlinkMany` use one multi-key command. For Redis Cluster and Ring clients, they use pipelined single-key commands to avoid multi-key hash-slot constraints.
+For standalone Redis, `DeleteMany` and `UnlinkMany` use one multi-key command.
+For Redis Cluster and Ring clients, they use pipelined single-key commands to
+avoid multi-key hash-slot constraints.
+
+Pipeline helpers reduce network round trips but do not provide all-or-nothing
+semantics. If execution fails, some commands may already have succeeded.
 
 ## Stop services
 

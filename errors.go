@@ -24,9 +24,6 @@ var (
 	// ErrInvalidCacheLoader is returned when a cache loader is nil or invalid.
 	ErrInvalidCacheLoader = errors.New("invalid cache loader")
 
-	// ErrLockNotAcquired is returned when a Redis lock cannot be acquired.
-	ErrLockNotAcquired = errors.New("lock not acquired")
-
 	// ErrLockNotOwned is returned when a lock is expired, deleted, or owned by another token.
 	ErrLockNotOwned = errors.New("lock not owned")
 

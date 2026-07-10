@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log/slog"
 	"net"
 	"time"
 
@@ -38,7 +37,6 @@ type options struct {
 
 	// Runtime dependencies.
 	tls         *tls.Config
-	logger      *slog.Logger
 	limiter     rdb.Limiter
 	codec       Codec
 	credentials credentialsOptions
@@ -73,8 +71,7 @@ type credentialsOptions struct {
 
 func newOptions(opts ...Option) *options {
 	options := &options{
-		logger: slog.Default(),
-		codec:  JSONCodec{},
+		codec: JSONCodec{},
 	}
 
 	for _, opt := range opts {
@@ -85,10 +82,6 @@ func newOptions(opts ...Option) *options {
 
 	if options.clientID == "" {
 		options.clientID = uuid.NewString()
-	}
-
-	if options.logger == nil {
-		options.logger = slog.Default()
 	}
 
 	if options.codec == nil {
@@ -224,15 +217,6 @@ func WithIdentitySuffix(suffix string) Option {
 	return optionFunc(func(opts *options) {
 		if suffix != "" {
 			opts.identitySuffix = suffix
-		}
-	})
-}
-
-// WithLogger configures logger.
-func WithLogger(logger *slog.Logger) Option {
-	return optionFunc(func(opts *options) {
-		if logger != nil {
-			opts.logger = logger
 		}
 	})
 }

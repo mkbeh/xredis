@@ -1,4 +1,4 @@
-module github.com/mkbeh/xredis/examples/cache
+module cache
 
 go 1.26
 

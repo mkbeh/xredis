@@ -235,18 +235,9 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 func incrementCounterHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if err := client.Incr(r.Context(), counterKey(id)); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	value, ok, err := client.Int64(r.Context(), counterKey(id))
+	value, err := client.Incr(r.Context(), counterKey(id))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("counter not found"))
 		return
 	}
 
