@@ -3,6 +3,7 @@ package xredis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
@@ -318,23 +319,33 @@ func (c *Cache[T]) CompareAndSwap(ctx context.Context, key string, expected, val
 	)
 }
 
-func (c *Cache[T]) load(ctx context.Context, key string, loader Loader[T]) (T, error) {
+func (c *Cache[T]) load(
+	ctx context.Context,
+	key string,
+	loader Loader[T],
+) (T, error) {
 	value, err := loader(ctx)
-	if err != nil {
-		if c.negativeTTL > 0 && c.isNotFound(err) {
-			if setErr := c.setNegative(ctx, key); setErr != nil {
-				return value, errors.Join(err, setErr)
-			}
+	if err == nil {
+		if setErr := c.Set(ctx, key, value); setErr != nil {
+			return value, setErr
 		}
 
+		return value, nil
+	}
+
+	if !c.isNotFound(err) {
 		return value, err
 	}
 
-	if err = c.Set(ctx, key, value); err != nil {
-		return value, err
+	notFoundErr := normalizeCacheNotFound(err)
+
+	if c.negativeTTL > 0 {
+		if setErr := c.setNegative(ctx, key); setErr != nil {
+			return value, errors.Join(notFoundErr, setErr)
+		}
 	}
 
-	return value, nil
+	return value, notFoundErr
 }
 
 func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
@@ -417,6 +428,14 @@ func (c *Cache[T]) expiration(ttl time.Duration) time.Duration {
 	}
 
 	return ttl + rand.N(c.jitter)
+}
+
+func normalizeCacheNotFound(err error) error {
+	if errors.Is(err, ErrKeyNotFound) {
+		return err
+	}
+
+	return fmt.Errorf("%w: %w", ErrKeyNotFound, err)
 }
 
 func defaultCacheIsNotFound(err error) bool {

@@ -207,8 +207,12 @@ func (c *Client) TryFencedLockWithToken(
 	ttl time.Duration,
 	opts ...FencedLockOption,
 ) (*FencedLock, bool, error) {
-	if c == nil || c.conn == nil || key == "" || fencingKey == "" || token == "" {
+	if c == nil || c.conn == nil || token == "" {
 		return nil, false, ErrInvalidLock
+	}
+
+	if err := validateFencedLockKeys(key, fencingKey); err != nil {
+		return nil, false, err
 	}
 
 	options := newFencedLockOptions(opts...)
@@ -252,8 +256,8 @@ func (c *Client) TryFencedLockWithToken(
 
 // Unlock releases the lock if it is still owned by this FencedLock.
 func (l *FencedLock) Unlock(ctx context.Context) error {
-	if l == nil || l.lock == nil {
-		return ErrInvalidLock
+	if err := l.validate(); err != nil {
+		return err
 	}
 
 	return l.lock.Unlock(ctx)
@@ -264,11 +268,7 @@ func (l *FencedLock) Unlock(ctx context.Context) error {
 // If fencing counter TTL is configured, it is refreshed after a successful lock
 // extension.
 func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
-	if l == nil || l.lock == nil || l.fencingKey == "" {
-		return false, ErrInvalidLock
-	}
-
-	if err := l.lock.validate(); err != nil {
+	if err := l.validate(); err != nil {
 		return false, err
 	}
 
@@ -289,6 +289,26 @@ func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error
 	}
 
 	return extended == 1, nil
+}
+
+func (l *FencedLock) validate() error {
+	if l == nil || l.lock == nil {
+		return ErrInvalidLock
+	}
+
+	if err := l.lock.validate(); err != nil {
+		return err
+	}
+
+	return validateFencedLockKeys(l.lock.key, l.fencingKey)
+}
+
+func validateFencedLockKeys(key, fencingKey string) error {
+	if key == "" || fencingKey == "" || key == fencingKey {
+		return ErrInvalidLock
+	}
+
+	return nil
 }
 
 func parseFencedLockResult(result []any) (bool, int64, error) {
