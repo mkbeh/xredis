@@ -10,6 +10,7 @@ This example shows how to use Redis SCAN helpers with `xredis`.
 * Type filtering with `ScanOptions.Type`
 * Pattern deletion with `ScanDelete`
 * Pattern unlinking with `ScanUnlink`
+* Cluster and Ring topology-wide scans
 
 ## Configuration
 
@@ -118,6 +119,9 @@ Replace 12 with the next_cursor value from the previous response.
 
 The scan is complete when `next_cursor` is `0`.
 
+`Scan` represents one cursor sequence. For topology-wide Cluster or Ring scans,
+use `ScanAll`, `ScanEach`, or `ScanEachBatch`.
+
 ## Scan all
 
 `ScanAll` scans all matching keys and returns them as a slice.
@@ -131,6 +135,9 @@ For large keyspaces, prefer `ScanEach` or `ScanEachBatch` because `ScanAll` stor
 ## Scan batches
 
 `ScanEachBatch` calls the handler once per SCAN page.
+
+For Redis Cluster and Ring clients, callbacks from different nodes or shards may
+run concurrently. Shared state in the callback must be synchronized.
 
 ```shell
 curl 'localhost:8080/scan/batches?match=xredis:scan:*&count=5'
@@ -174,7 +181,8 @@ curl 'localhost:8080/scan/all?match=xredis:scan:delete:42:*&count=100'
 
 `ScanUnlink` scans keys and unlinks them using pipelined single-key `UNLINK` commands.
 
-`UNLINK` removes keys from the keyspace and reclaims memory asynchronously, which is preferable for large values.
+`UNLINK` removes keys from the keyspace and reclaims memory asynchronously,
+which is preferable for large values.
 
 ```shell
 curl -X DELETE 'localhost:8080/scan/unlink/42'
@@ -196,11 +204,18 @@ curl -X DELETE 'localhost:8080/sample'
 
 ## Redis Cluster note
 
-`ScanEach`, `ScanEachBatch`, `ScanAll`, `ScanDelete`, and `ScanUnlink` are cluster-aware.
+`ScanEach`, `ScanEachBatch`, `ScanAll`, `ScanDelete`, and `ScanUnlink` are
+topology-aware.
 
-For Redis Cluster clients, they scan every master node from cursor `0`, because SCAN cursors are node-local.
+For Redis Cluster clients, they scan every master node. For Redis Ring clients,
+they scan every live shard. Each node or shard starts from cursor `0`, because
+SCAN cursors are node-local.
 
-`ScanDelete` and `ScanUnlink` use pipelined single-key commands to avoid multi-key hash-slot constraints.
+Callbacks passed to `ScanEach` and `ScanEachBatch` may run concurrently across
+nodes or shards. Synchronize access to shared state.
+
+`ScanDelete` and `ScanUnlink` use pipelined single-key commands to avoid
+multi-key hash-slot constraints.
 
 ## Stop services
 

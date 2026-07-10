@@ -147,7 +147,8 @@ HTTP 200
 
 ## Stale raw value check
 
-This endpoint seeds `processing`, swaps it to `cancelled`, then tries to swap the stale expected value `processing` to `completed`.
+This endpoint seeds `processing`, swaps it to `cancelled`, then tries to swap the stale expected value `processing` to
+`completed`.
 
 ```shell
 curl -X POST 'localhost:8080/statuses/42/stale'
@@ -213,7 +214,8 @@ HTTP 200
 
 ## Stale struct value check
 
-This endpoint seeds an order, swaps it from `processing` to `cancelled`, then tries to swap the stale old order to `completed`.
+This endpoint seeds an order, swaps it from `processing` to `cancelled`, then tries to swap the stale old order to
+`completed`.
 
 ```shell
 curl -X POST 'localhost:8080/orders/42/stale'
@@ -243,7 +245,8 @@ curl -X DELETE 'localhost:8080/sample'
 
 CAS/CAD operations in this example use one Redis key per Lua script call.
 
-For Redis Cluster, single-key Lua scripts are routed to the node that owns that key, so no hash tag is required for these operations.
+For Redis Cluster, single-key Lua scripts are routed to the node that owns that key, so no hash tag is required for
+these operations.
 
 ## Stop services
 

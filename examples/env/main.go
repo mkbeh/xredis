@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	exampleClient = "env-client"
+	exampleClient = "env-example-client"
 	exampleKey    = "xredis:env:message"
 	exampleValue  = "hello from xredis env example"
 	exampleTTL    = time.Minute
@@ -35,16 +35,16 @@ func main() {
 		log.Fatalln(err)
 	}
 	defer func() {
-		if err := client.Close(); err != nil {
-			log.Println("redis client close error:", err)
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close Redis client:", closeErr)
 		}
 	}()
 
-	if err := client.Ping(ctx); err != nil {
+	if err = client.Ping(ctx); err != nil {
 		log.Fatalln(err)
 	}
 
-	if err := client.Set(ctx, exampleKey, exampleValue, exampleTTL); err != nil {
+	if err = client.Set(ctx, exampleKey, exampleValue, exampleTTL); err != nil {
 		log.Fatalln(err)
 	}
 
@@ -52,7 +52,6 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-
 	if !ok {
 		log.Fatalf("key %q was not found", exampleKey)
 	}

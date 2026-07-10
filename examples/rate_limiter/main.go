@@ -145,7 +145,7 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if err := client.MassDelete(r.Context(), keys); err != nil {
+	if err := client.DeleteMany(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

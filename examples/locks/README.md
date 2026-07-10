@@ -7,7 +7,7 @@ This example shows how to use Redis lease locks and fenced locks with `xredis`.
 * Redis lease lock with `TryLock`
 * Safe `Unlock` with owner token check
 * Lock TTL extension with `Extend`
-* Fenced lock with monotonically increasing fencing token
+* Fenced lock with a fencing token
 * Fencing counter retention with `WithFencingCounterTTL`
 * Resource-side stale fencing token rejection
 
@@ -16,7 +16,7 @@ This example shows how to use Redis lease locks and fenced locks with `xredis`.
 ```text
 REDIS_ADDR=localhost:6379
 HTTP_ADDR=localhost:8080
-````
+```
 
 ## Local Redis setup
 
@@ -49,7 +49,7 @@ http://localhost:5540
 Inside RedisInsight, add a Redis database with:
 
 ```text
-Database alias: redis-cache-example
+Database alias: redis-locks-example
 Host: redis-standalone
 Port: 6379
 Username: default
@@ -166,7 +166,7 @@ HTTP 200
 
 ## Cleanup
 
-Deletes known sample lock and fencing keys and resets the in-memory repository.
+Deletes known sample lock and fencing keys with `DeleteMany` and resets the in-memory repository.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'

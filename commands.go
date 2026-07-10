@@ -3,7 +3,6 @@ package xredis
 import (
 	"context"
 	"errors"
-	"reflect"
 	"time"
 
 	rdb "github.com/redis/go-redis/v9"
@@ -30,48 +29,77 @@ func (c *Client) HIncrBy(ctx context.Context, key, field string, incr int64) err
 }
 
 // HGetAll returns all fields and values of the hash stored at key and scans the result into dst.
-func (c *Client) HGetAll(ctx context.Context, key string, dst any) error {
+//
+// It returns ok=false when the hash does not exist or has no fields.
+func (c *Client) HGetAll(ctx context.Context, key string, dst any) (bool, error) {
+	if dst == nil {
+		return false, ErrInvalidHashObject
+	}
+
 	res := c.conn.HGetAll(ctx, key)
 	if err := res.Err(); err != nil {
-		return err
+		return false, err
 	}
 
 	if len(res.Val()) == 0 {
-		return ErrKeyNotFound
+		return false, nil
 	}
 
-	return res.Scan(dst)
+	if err := res.Scan(dst); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
-// HGet returns the value associated with field in the hash stored at key and scans the result into dst.
-func (c *Client) HGet(ctx context.Context, key, field string, dst any) error {
-	if err := c.conn.HGet(ctx, key, field).Scan(dst); err != nil {
+// HGet returns the value associated with field in the hash stored at key.
+//
+// It returns ok=false when the hash or field does not exist.
+func (c *Client) HGet(ctx context.Context, key, field string) (string, bool, error) {
+	value, err := c.conn.HGet(ctx, key, field).Result()
+	if err != nil {
 		if errors.Is(err, rdb.Nil) {
-			return ErrKeyNotFound
+			return "", false, nil
 		}
 
-		return err
+		return "", false, err
 	}
 
-	return nil
+	return value, true, nil
 }
 
-// HSet sets field in the hash stored at key to value and optionally applies TTL to the hash key.
-func (c *Client) HSet(ctx context.Context, key, field string, value any, ttl time.Duration) error {
+// HSet sets hash fields and optionally applies TTL to the hash key.
+//
+// values is passed to go-redis HSet, so it supports the same input formats:
+// flat field-value pairs, slices, maps, structs, and pointers to structs.
+//
+// Examples:
+//
+//	HSet(ctx, "user:42", 0, "name", "Bob", "age", 30)
+//	HSet(ctx, "user:42", time.Hour, map[string]any{"name": "Bob", "age": 30})
+//	HSet(ctx, "user:42", time.Hour, UserHash{Name: "Bob"})
+//
+// Struct values are parsed by go-redis using redis tags.
+//
+// ttl < 0 returns ErrInvalidTTL.
+// ttl == 0 leaves the hash expiration unchanged.
+// ttl > 0 applies the expiration to the hash key after HSET.
+func (c *Client) HSet(ctx context.Context, key string, ttl time.Duration, values ...any) error {
 	if ttl < 0 {
 		return ErrInvalidTTL
 	}
 
-	if err := validateRedisScalar(value); err != nil {
-		return err
+	if len(values) == 0 {
+		return ErrInvalidHashObject
+	}
+
+	if ttl == 0 {
+		return c.conn.HSet(ctx, key, values...).Err()
 	}
 
 	pipe := c.conn.TxPipeline()
-	pipe.HSet(ctx, key, field, value)
-
-	if ttl > 0 {
-		pipe.Expire(ctx, key, ttl)
-	}
+	pipe.HSet(ctx, key, values...)
+	pipe.Expire(ctx, key, ttl)
 
 	cmders, err := pipe.Exec(ctx)
 	if err != nil {
@@ -87,103 +115,222 @@ func (c *Client) HSet(ctx context.Context, key, field string, value any, ttl tim
 	return nil
 }
 
-// HSetObject sets redis-tagged fields of data object in the hash stored at key.
-func (c *Client) HSetObject(ctx context.Context, key string, data any, ttl time.Duration) error {
-	if ttl < 0 {
-		return ErrInvalidTTL
-	}
-
-	value, err := structValue(data)
-	if err != nil {
-		return err
-	}
-
-	pipe := c.conn.TxPipeline()
-	fields := 0
-
-	typ := value.Type()
-	for i := 0; i < value.NumField(); i++ {
-		fieldInfo := typ.Field(i)
-		tagValue, ok := fieldInfo.Tag.Lookup("redis")
-		if !ok || tagValue == "-" {
-			continue
-		}
-
-		field := value.Field(i)
-		if !field.CanInterface() {
-			continue
-		}
-
-		if err = validateRedisScalar(field.Interface()); err != nil {
-			return err
-		}
-
-		pipe.HSet(ctx, key, tagValue, field.Interface())
-		fields++
-	}
-
-	if ttl > 0 {
-		pipe.Expire(ctx, key, ttl)
-	}
-
-	if fields == 0 && ttl == 0 {
-		return nil
-	}
-
-	cmders, err := pipe.Exec(ctx)
-	if err != nil {
-		return err
-	}
-
-	for _, cmd := range cmders {
-		if err = cmd.Err(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+// HDel deletes fields from the hash stored at key.
+//
+// It returns the number of fields that were removed.
+func (c *Client) HDel(ctx context.Context, key string, fields ...string) (int64, error) {
+	return c.conn.HDel(ctx, key, fields...).Result()
 }
 
 // Get reads a Redis string value and scans it into dst.
-func (c *Client) Get(ctx context.Context, key string, dst any) error {
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) Get(ctx context.Context, key string, dst any) (bool, error) {
 	if err := c.conn.Get(ctx, key).Scan(dst); err != nil {
 		if errors.Is(err, rdb.Nil) {
-			return ErrKeyNotFound
+			return false, nil
 		}
 
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
-// Set executes Redis SET command.
-func (c *Client) Set(ctx context.Context, key string, val any, expiration time.Duration) error {
-	return c.conn.Set(ctx, key, val, expiration).Err()
-}
-
-// SetStruct marshals val and stores it using Redis SET command.
-func (c *Client) SetStruct(ctx context.Context, key string, val any, expiration time.Duration) error {
-	data, err := c.codec.Marshal(val)
+// GetDel reads the value stored at key and atomically deletes the key.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) GetDel(ctx context.Context, key string) (string, bool, error) {
+	value, err := c.conn.GetDel(ctx, key).Result()
 	if err != nil {
-		return err
+		if errors.Is(err, rdb.Nil) {
+			return "", false, nil
+		}
+
+		return "", false, err
 	}
 
-	return c.conn.Set(ctx, key, data, expiration).Err()
+	return value, true, nil
 }
 
-// GetStruct reads a Redis string value and unmarshals it into dst.
-func (c *Client) GetStruct(ctx context.Context, key string, dst any) error {
+// GetEx reads the value stored at key and atomically updates its expiration.
+//
+// ttl < 0 returns ErrInvalidTTL.
+// ttl == 0 removes the existing expiration.
+// ttl > 0 applies the given expiration.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) GetEx(
+	ctx context.Context,
+	key string,
+	ttl time.Duration,
+) (string, bool, error) {
+	if ttl < 0 {
+		return "", false, ErrInvalidTTL
+	}
+
+	value, err := c.conn.GetEx(ctx, key, ttl).Result()
+	if err != nil {
+		if errors.Is(err, rdb.Nil) {
+			return "", false, nil
+		}
+
+		return "", false, err
+	}
+
+	return value, true, nil
+}
+
+// GetStruct reads an encoded Redis value and unmarshals it into dst.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) GetStruct(ctx context.Context, key string, dst any) (bool, error) {
 	data, err := c.conn.Get(ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
-			return ErrKeyNotFound
+			return false, nil
 		}
 
+		return false, err
+	}
+
+	if err = c.codec.Unmarshal(data, dst); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// GetStructDel reads an encoded value, atomically deletes the key,
+// and decodes the value into dst.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) GetStructDel(ctx context.Context, key string, dst any) (bool, error) {
+	data, err := c.conn.GetDel(ctx, key).Bytes()
+	if err != nil {
+		if errors.Is(err, rdb.Nil) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	if err = c.codec.Unmarshal(data, dst); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// GetStructEx reads an encoded value, atomically updates its expiration,
+// and decodes the value into dst.
+//
+// ttl < 0 returns ErrInvalidTTL.
+// ttl == 0 removes the existing expiration.
+// ttl > 0 applies the given expiration.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) GetStructEx(
+	ctx context.Context,
+	key string,
+	dst any,
+	ttl time.Duration,
+) (bool, error) {
+	if ttl < 0 {
+		return false, ErrInvalidTTL
+	}
+
+	data, err := c.conn.GetEx(ctx, key, ttl).Bytes()
+	if err != nil {
+		if errors.Is(err, rdb.Nil) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	if err = c.codec.Unmarshal(data, dst); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Set executes Redis SET command.
+func (c *Client) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if ttl < 0 {
+		return ErrInvalidTTL
+	}
+
+	return c.conn.Set(ctx, key, value, ttl).Err()
+}
+
+// SetNX sets key to value only when key does not exist.
+//
+// It returns ok=false when the key already exists.
+func (c *Client) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	if ttl < 0 {
+		return false, ErrInvalidTTL
+	}
+
+	return c.conn.SetNX(ctx, key, value, ttl).Result()
+}
+
+// SetXX sets key to value only when key already exists.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) SetXX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	if ttl < 0 {
+		return false, ErrInvalidTTL
+	}
+
+	return c.conn.SetXX(ctx, key, value, ttl).Result()
+}
+
+// SetStruct marshals value and stores it using Redis SET command.
+func (c *Client) SetStruct(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if ttl < 0 {
+		return ErrInvalidTTL
+	}
+
+	data, err := c.codec.Marshal(value)
+	if err != nil {
 		return err
 	}
 
-	return c.codec.Unmarshal(data, dst)
+	return c.Set(ctx, key, data, ttl)
+}
+
+// SetStructNX marshals value and stores it only when key does not exist.
+//
+// It returns ok=false when the key already exists.
+func (c *Client) SetStructNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	if ttl < 0 {
+		return false, ErrInvalidTTL
+	}
+
+	data, err := c.codec.Marshal(value)
+	if err != nil {
+		return false, err
+	}
+
+	return c.SetNX(ctx, key, data, ttl)
+}
+
+// SetStructXX marshals value and stores it only when key already exists.
+//
+// It returns ok=false when the key does not exist.
+func (c *Client) SetStructXX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	if ttl < 0 {
+		return false, ErrInvalidTTL
+	}
+
+	data, err := c.codec.Marshal(value)
+	if err != nil {
+		return false, err
+	}
+
+	return c.SetXX(ctx, key, data, ttl)
 }
 
 // Bool reads a Redis string value as bool.
@@ -304,45 +451,4 @@ func (c *Client) Decr(ctx context.Context, key string) error {
 // Delete deletes key.
 func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.conn.Del(ctx, key).Err()
-}
-
-func validateRedisScalar(value any) error {
-	v := reflect.ValueOf(value)
-	if !v.IsValid() {
-		return ErrInvalidFieldType
-	}
-
-	switch v.Kind() {
-	case reflect.Pointer,
-		reflect.Array,
-		reflect.Map,
-		reflect.Struct,
-		reflect.Slice,
-		reflect.Func,
-		reflect.Chan,
-		reflect.UnsafePointer:
-		return ErrInvalidFieldType
-	default:
-		return nil
-	}
-}
-
-func structValue(value any) (reflect.Value, error) {
-	v := reflect.ValueOf(value)
-	if !v.IsValid() {
-		return reflect.Value{}, ErrInvalidFieldType
-	}
-
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return reflect.Value{}, ErrInvalidFieldType
-		}
-		v = v.Elem()
-	}
-
-	if v.Kind() != reflect.Struct {
-		return reflect.Value{}, ErrInvalidFieldType
-	}
-
-	return v, nil
 }

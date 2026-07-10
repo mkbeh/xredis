@@ -1,22 +1,22 @@
-# Env Configuration Example
+# Environment Configuration
 
-This example shows how to load `xredis.Config` from environment variables using `github.com/caarlos0/env`.
+This example shows how to load `xredis.ClientConfig` from environment variables using `github.com/caarlos0/env`.
 
 **This example demonstrates:**
 
-* loading Redis configuration from environment variables;
-* creating an xredis client from the loaded config;
-* checking Redis availability with `PING`;
-* storing and reading one string value with TTL.
+* Loading Redis configuration from environment variables
+* Creating an `xredis` client from the parsed configuration
+* Redis health checks with `Ping`
+* Storing and reading a raw string value with `Set` and `String`
 
 ## Configuration
 
-Configure Redis connection using environment variables:
+The example uses `UseFieldNameByDefault`, so environment variable names are derived directly from `ClientConfig` field names without configuration tags.
 
-```text
-MODE=standalone
-ADDRS=localhost:6379
-DB=0
+```shell
+export MODE=standalone
+export ADDRS=localhost:6379
+export DB=0
 ```
 
 ## Local Redis setup
@@ -50,7 +50,7 @@ http://localhost:5540
 Inside RedisInsight, add a Redis database with:
 
 ```text
-Database alias: redis-env
+Database alias: redis-env-example
 Host: redis-standalone
 Port: 6379
 Username: default
@@ -63,7 +63,7 @@ Database index: 0
 From this directory:
 
 ```shell
-go run main.go
+go run .
 ```
 
 Or from the repository root:

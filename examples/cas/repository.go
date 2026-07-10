@@ -57,12 +57,13 @@ func (r *orderRepository) Seed(ctx context.Context, id string) (Order, error) {
 func (r *orderRepository) Get(ctx context.Context, id string) (Order, bool, error) {
 	var order Order
 
-	if err := r.client.GetStruct(ctx, orderKey(id), &order); err != nil {
-		if errors.Is(err, xredis.ErrKeyNotFound) {
-			return Order{}, false, nil
-		}
-
+	ok, err := r.client.GetStruct(ctx, orderKey(id), &order)
+	if err != nil {
 		return Order{}, false, err
+	}
+
+	if !ok {
+		return Order{}, false, nil
 	}
 
 	return order, true, nil

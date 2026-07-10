@@ -268,6 +268,47 @@ func (c *Cache[T]) Forget(key string) {
 	c.group.Forget(c.key(key))
 }
 
+// CompareAndDelete deletes a cached value only when it equals expected.
+//
+// It returns deleted=false when the key is missing, contains a negative cache
+// entry, or contains a different value.
+func (c *Cache[T]) CompareAndDelete(ctx context.Context, key string, expected T) (bool, error) {
+	expectedData, err := c.encode(expected)
+	if err != nil {
+		return false, err
+	}
+
+	return c.client.compareAndDelete(
+		ctx,
+		c.key(key),
+		expectedData,
+	)
+}
+
+// CompareAndSwap replaces a cached value only when it equals expected.
+//
+// A successful swap refreshes the cache entry expiration using the configured
+// cache TTL and jitter.
+func (c *Cache[T]) CompareAndSwap(ctx context.Context, key string, expected, value T) (bool, error) {
+	expectedData, err := c.encode(expected)
+	if err != nil {
+		return false, err
+	}
+
+	valueData, err := c.encode(value)
+	if err != nil {
+		return false, err
+	}
+
+	return c.client.compareAndSwap(
+		ctx,
+		c.key(key),
+		expectedData,
+		valueData,
+		c.expiration(c.ttl),
+	)
+}
+
 func (c *Cache[T]) load(ctx context.Context, key string, loader Loader[T]) (T, error) {
 	value, err := loader(ctx)
 	if err != nil {

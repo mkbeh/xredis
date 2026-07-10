@@ -84,7 +84,7 @@ curl 'localhost:8080/healthz'
 
 ## Default allow flow
 
-`Allow` is an alias for fixed-window rate limiting.
+`Allow` uses fixed-window rate limiting and is equivalent to `AllowFixedWindow`.
 
 ```shell
 curl -i -X POST 'localhost:8080/allow/42'
@@ -175,7 +175,7 @@ Some tokens should be refilled.
 
 ## Cleanup
 
-Deletes known sample rate-limit keys.
+Deletes known sample rate-limit keys with `DeleteMany`.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'

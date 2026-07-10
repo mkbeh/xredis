@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/mkbeh/xredis"
@@ -35,8 +35,6 @@ var (
 
 	redisAddr string
 	httpAddr  string
-
-	sampleIDs = []string{"42", "7", "100"}
 )
 
 type scanPageResponse struct {
@@ -154,6 +152,7 @@ func scanBatchesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
+		mu      sync.Mutex
 		total   int
 		batches []scanBatch
 	)
@@ -161,12 +160,14 @@ func scanBatchesHandler(w http.ResponseWriter, r *http.Request) {
 	err = client.ScanEachBatch(r.Context(), opts, func(_ context.Context, keys []string) error {
 		batchKeys := append([]string(nil), keys...)
 
+		mu.Lock()
 		total += len(batchKeys)
 		batches = append(batches, scanBatch{
 			Index: len(batches) + 1,
 			Total: len(batchKeys),
 			Keys:  batchKeys,
 		})
+		mu.Unlock()
 
 		return nil
 	})
@@ -249,7 +250,7 @@ func main() {
 	}
 	defer func() {
 		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
+			log.Println("unable to close Redis client:", closeErr)
 		}
 	}()
 
@@ -294,10 +295,13 @@ func seedSample(ctx context.Context, id string) ([]string, error) {
 	}
 
 	hashKey := hashKey(id)
-	if err := client.HSet(ctx, hashKey, "id", id, sampleTTL); err != nil {
-		return nil, err
-	}
-	if err := client.HSet(ctx, hashKey, "status", "active", sampleTTL); err != nil {
+	if err := client.HSet(
+		ctx,
+		hashKey,
+		sampleTTL,
+		"id", id,
+		"status", "active",
+	); err != nil {
 		return nil, err
 	}
 	keys = append(keys, hashKey)
@@ -316,7 +320,7 @@ func seedSample(ctx context.Context, id string) ([]string, error) {
 
 	for i := 1; i <= 5; i++ {
 		key := deleteKey(id, i)
-		if err := client.Set(ctx, key, strings.Repeat("delete-value", 10), sampleTTL); err != nil {
+		if err := client.Set(ctx, key, "delete-value", sampleTTL); err != nil {
 			return nil, err
 		}
 
@@ -325,7 +329,7 @@ func seedSample(ctx context.Context, id string) ([]string, error) {
 
 	for i := 1; i <= 5; i++ {
 		key := unlinkKey(id, i)
-		if err := client.Set(ctx, key, strings.Repeat("unlink-value", 100), sampleTTL); err != nil {
+		if err := client.Set(ctx, key, "unlink-value", sampleTTL); err != nil {
 			return nil, err
 		}
 
@@ -348,6 +352,9 @@ func scanOptionsFromRequest(r *http.Request) (xredis.ScanOptions, error) {
 		parsedCount, err := strconv.ParseInt(rawCount, 10, 64)
 		if err != nil {
 			return xredis.ScanOptions{}, fmt.Errorf("invalid count: %w", err)
+		}
+		if parsedCount < 0 {
+			return xredis.ScanOptions{}, fmt.Errorf("count must not be negative")
 		}
 
 		count = parsedCount

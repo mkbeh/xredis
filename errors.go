@@ -6,9 +6,6 @@ var (
 	// ErrKeyNotFound is returned when a Redis key or cache value is not found.
 	ErrKeyNotFound = errors.New("key not found")
 
-	// ErrInvalidFieldType is returned when a struct field has an unsupported type.
-	ErrInvalidFieldType = errors.New("invalid field type")
-
 	// ErrInvalidHashObject is returned when a value cannot be used as a Redis hash object.
 	ErrInvalidHashObject = errors.New("invalid hash object")
 
