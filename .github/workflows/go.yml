@@ -32,6 +32,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
           cache-dependency-path: go.sum
 
       - name: Download dependencies
@@ -86,6 +87,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
           cache-dependency-path: go.sum
 
       - name: Run tests
@@ -135,6 +137,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
           cache-dependency-path: |
             go.sum
             examples/**/go.sum
@@ -161,8 +164,8 @@ jobs:
               go work init . "$root"
 
               go mod verify
-              go vet -mod=mod ./...
-              go test -mod=mod -race -count=1 ./...
+              go vet ./...
+              go test -race -count=1 ./...
             )
 
             echo "::endgroup::"

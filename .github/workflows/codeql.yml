@@ -31,6 +31,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
