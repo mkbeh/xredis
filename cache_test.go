@@ -18,9 +18,30 @@ type cacheUser struct {
 	Active bool   `json:"active"`
 }
 
+type cacheUserPointer *cacheUser
+
+type cacheUserID int64
+
 type cacheUserResult struct {
 	value cacheUser
 	err   error
+}
+
+type cacheCodecSpy struct {
+	marshalCalls   atomic.Int64
+	unmarshalCalls atomic.Int64
+}
+
+func (c *cacheCodecSpy) Marshal(value any) ([]byte, error) {
+	c.marshalCalls.Add(1)
+
+	return (xredis.JSONCodec{}).Marshal(value)
+}
+
+func (c *cacheCodecSpy) Unmarshal(data []byte, dst any) error {
+	c.unmarshalCalls.Add(1)
+
+	return (xredis.JSONCodec{}).Unmarshal(data, dst)
 }
 
 var _ = Describe("Cache", func() {
@@ -33,6 +54,146 @@ var _ = Describe("Cache", func() {
 
 	AfterEach(func() {
 		Expect(client.Close()).To(Succeed())
+	})
+
+	Describe("type validation", func() {
+		It("rejects interface cache types", func() {
+			cache, err := xredis.NewCache[any](
+				client,
+				xredis.WithCachePrefix("cache:any:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+
+			Expect(cache).To(BeNil())
+			Expect(errors.Is(err, xredis.ErrInvalidCache)).To(BeTrue())
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("interface cache type"))
+		})
+	})
+
+	Describe("encoding", func() {
+		It("stores Redis-native values without using the cache codec", func() {
+			const prefix = "cache:raw:"
+
+			codec := new(cacheCodecSpy)
+			cache, err := xredis.NewCache[string](
+				client,
+				xredis.WithCachePrefix(prefix),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheCodec(codec),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cache.Set(ctx, "name", "Ada")).To(Succeed())
+
+			raw, err := client.Raw().Get(ctx, prefix+"name").Result()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(raw).To(Equal("Ada"))
+
+			value, ok, err := cache.Get(ctx, "name")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal("Ada"))
+			Expect(codec.marshalCalls.Load()).To(BeZero())
+			Expect(codec.unmarshalCalls.Load()).To(BeZero())
+		})
+
+		It("uses the cache codec for named scalar types", func() {
+			codec := new(cacheCodecSpy)
+			cache, err := xredis.NewCache[cacheUserID](
+				client,
+				xredis.WithCachePrefix("cache:named-scalar:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheCodec(codec),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			const expected cacheUserID = 42
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+			Expect(codec.marshalCalls.Load()).To(Equal(int64(1)))
+			Expect(codec.unmarshalCalls.Load()).To(Equal(int64(1)))
+		})
+
+		It("uses the cache codec for structured values", func() {
+			const prefix = "cache:codec:"
+
+			codec := new(cacheCodecSpy)
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix(prefix),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheCodec(codec),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := cacheUser{
+				ID:     "42",
+				Name:   "Ada",
+				Active: true,
+			}
+
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+
+			raw, err := client.Raw().Get(ctx, prefix+"42").Result()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(raw).To(MatchJSON(`{"id":"42","name":"Ada","active":true}`))
+
+			value, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+			Expect(codec.marshalCalls.Load()).To(Equal(int64(1)))
+			Expect(codec.unmarshalCalls.Load()).To(Equal(int64(1)))
+		})
+
+		It("decodes pointer values without adding another pointer level", func() {
+			cache, err := xredis.NewCache[*cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:pointer:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := &cacheUser{
+				ID:     "42",
+				Name:   "Ada",
+				Active: true,
+			}
+
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+		})
+
+		It("decodes named pointer values", func() {
+			cache, err := xredis.NewCache[cacheUserPointer](
+				client,
+				xredis.WithCachePrefix("cache:named-pointer:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := cacheUserPointer(&cacheUser{
+				ID:     "42",
+				Name:   "Ada",
+				Active: true,
+			})
+
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+		})
 	})
 
 	Describe("singleflight", func() {
@@ -97,32 +258,6 @@ var _ = Describe("Cache", func() {
 		})
 	})
 
-	Describe("interface values", func() {
-		It("supports a nil value loaded into Cache[any]", func() {
-			cache, err := xredis.NewCache[any](
-				client,
-				xredis.WithCachePrefix("cache:any:"),
-				xredis.WithCacheTTL(time.Minute),
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			value, err := cache.GetOrLoad(
-				ctx,
-				"value",
-				func(context.Context) (any, error) {
-					return nil, nil
-				},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(value).To(BeNil())
-
-			value, ok, err := cache.Get(ctx, "value")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(ok).To(BeTrue())
-			Expect(value).To(BeNil())
-		})
-	})
-
 	Describe("not-found handling", func() {
 		It("normalizes a custom not-found error", func() {
 			errUserNotFound := errors.New("user not found")
@@ -182,9 +317,31 @@ var _ = Describe("Cache", func() {
 		})
 	})
 
-	Describe("entry validation", func() {
-		It("rejects a corrupted negative cache entry", func() {
-			const prefix = "cache:corrupted:"
+	Describe("entry markers", func() {
+		It("treats values longer than the negative marker as regular values", func() {
+			cache, err := xredis.NewCache[[]byte](
+				client,
+				xredis.WithCachePrefix("cache:marker:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := []byte{0, 1}
+			Expect(cache.Set(ctx, "value", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "value")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+		})
+	})
+
+	Describe("client compare operations", func() {
+		It("operates on positive cache values without a cache-specific format", func() {
+			const (
+				prefix = "cache:compare:"
+				key    = prefix + "42"
+			)
 
 			cache, err := xredis.NewCache[string](
 				client,
@@ -193,45 +350,14 @@ var _ = Describe("Cache", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(client.Raw().Set(
-				ctx,
-				prefix+"value",
-				[]byte{0, 1},
-				time.Minute,
-			).Err()).To(Succeed())
-
-			value, ok, err := cache.Get(ctx, "value")
-			Expect(errors.Is(err, xredis.ErrInvalidCacheEntry)).To(BeTrue())
-			Expect(ok).To(BeFalse())
-			Expect(value).To(BeEmpty())
-		})
-	})
-
-	Describe("compare operations", func() {
-		It("swaps and deletes cache values using the cache format", func() {
-			cache, err := xredis.NewCache[string](
-				client,
-				xredis.WithCachePrefix("cache:cas:"),
-				xredis.WithCacheTTL(time.Minute),
-			)
-			Expect(err).NotTo(HaveOccurred())
-
 			Expect(cache.Set(ctx, "42", "processing")).To(Succeed())
 
-			swapped, err := cache.CompareAndSwap(
+			swapped, err := client.CompareAndSwap(
 				ctx,
-				"42",
-				"pending",
-				"completed",
-			)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(swapped).To(BeFalse())
-
-			swapped, err = cache.CompareAndSwap(
-				ctx,
-				"42",
+				key,
 				"processing",
 				"completed",
+				time.Minute,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(swapped).To(BeTrue())
@@ -241,11 +367,7 @@ var _ = Describe("Cache", func() {
 			Expect(ok).To(BeTrue())
 			Expect(value).To(Equal("completed"))
 
-			deleted, err := cache.CompareAndDelete(ctx, "42", "processing")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(deleted).To(BeFalse())
-
-			deleted, err = cache.CompareAndDelete(ctx, "42", "completed")
+			deleted, err := client.CompareAndDelete(ctx, key, "completed")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(deleted).To(BeTrue())
 
@@ -253,38 +375,6 @@ var _ = Describe("Cache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeFalse())
 			Expect(value).To(BeEmpty())
-		})
-
-		It("does not match a negative entry as a regular cache value", func() {
-			cache, err := xredis.NewCache[string](
-				client,
-				xredis.WithCachePrefix("cache:negative-cas:"),
-				xredis.WithCacheTTL(time.Minute),
-				xredis.WithCacheNegativeTTL(time.Minute),
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			_, err = cache.GetOrLoad(
-				ctx,
-				"404",
-				func(context.Context) (string, error) {
-					return "", xredis.ErrKeyNotFound
-				},
-			)
-			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
-
-			swapped, err := cache.CompareAndSwap(
-				ctx,
-				"404",
-				"",
-				"value",
-			)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(swapped).To(BeFalse())
-
-			deleted, err := cache.CompareAndDelete(ctx, "404", "")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(deleted).To(BeFalse())
 		})
 	})
 })

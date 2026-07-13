@@ -7,6 +7,7 @@ This example shows how to use `xredis.Cache[T]` in a simple REST API service.
 * Standalone Redis client configuration
 * Redis health check with `PING`
 * Typed cache `Get`, `Set`, `Delete`, and `GetOrLoad`
+* Default codec encoding for structured values
 * Singleflight for concurrent cache misses
 * TTL jitter
 * Negative caching for not-found results
@@ -61,10 +62,10 @@ Database index: 0
 
 ## Run
 
-From this directory:
+From this example directory:
 
 ```shell
-go run main.go
+go run .
 ```
 
 Or from the repository root:
@@ -100,15 +101,15 @@ This example is easier to check as a sequence:
 
 ```text
 1. Reset sample state
-2. Try to read user from cache only
-3. Load user through GetOrLoad
+2. Try to read a user from cache only
+3. Load the user through GetOrLoad
 4. Read the same user from cache again
 5. Check repository load stats
-````
+```
 
 ## 1. Reset sample state
 
-Deletes Redis keys with `xredis:cache:*` prefix and resets in-memory repository stats.
+Deletes the known sample cache keys and resets the in-memory repository and load counters.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'
@@ -118,7 +119,7 @@ Expected result:
 
 ```text
 HTTP 200
-{"deleted":0}
+{"status":"reset"}
 ```
 
 ## 2. Read from cache only
@@ -136,7 +137,7 @@ HTTP 404
 {"error":"key not found"}
 ```
 
-At this point Redis does not have key:
+At this point Redis does not have the key:
 
 ```text
 xredis:cache:user:42
@@ -146,7 +147,7 @@ xredis:cache:user:42
 
 This endpoint uses `Cache.GetOrLoad`.
 
-On cache miss, it calls the repository loader and stores the result in Redis.
+On cache miss, it calls the repository loader and stores the result in Redis using the cache codec.
 
 ```shell
 curl 'localhost:8080/users/42/load'
@@ -156,7 +157,7 @@ Expected result:
 
 ```text
 HTTP 200
-{"key":"xredis:cache:user:42","source":"cache_or_loader","ttl":"...","user":{"id":"42","name":"Ada Lovelace from repository","age":36,"active":true}}
+{"key":"xredis:cache:user:42","source":"cache_or_loader","user":{"id":"42","name":"Ada Lovelace from repository","age":36,"active":true}}
 ```
 
 The key is now visible in RedisInsight as:
@@ -177,10 +178,10 @@ Expected result:
 
 ```text
 HTTP 200
-{"key":"xredis:cache:user:42","source":"cache","ttl":"...","user":{"id":"42","name":"Ada Lovelace from repository","age":36,"active":true}}
+{"key":"xredis:cache:user:42","source":"cache","user":{"id":"42","name":"Ada Lovelace from repository","age":36,"active":true}}
 ```
 
-This time the value is returned directly from Redis.
+This time the value is read from Redis and decoded by the cache codec.
 
 ## 5. Check repository load stats
 
@@ -201,7 +202,7 @@ Even though the user was requested twice, the repository was called only once.
 
 ## Write-through flow
 
-Use `PUT /users/{id}` to store a user in both repository and cache.
+Use `PUT /users/{id}` to store a user in both the repository and cache.
 
 ```shell
 curl -X PUT 'localhost:8080/users/100' \
@@ -217,7 +218,7 @@ Expected result:
 
 ```text
 HTTP 200
-{"key":"xredis:cache:user:100","source":"write_through","ttl":"...","user":{"id":"100","name":"Katherine Johnson","age":101,"active":true}}
+{"key":"xredis:cache:user:100","source":"write_through","user":{"id":"100","name":"Katherine Johnson","age":101,"active":true}}
 ```
 
 Read it from cache:
@@ -230,10 +231,10 @@ Expected result:
 
 ```text
 HTTP 200
-{"key":"xredis:cache:user:100","source":"cache","ttl":"...","user":{"id":"100","name":"Katherine Johnson","age":101,"active":true}}
+{"key":"xredis:cache:user:100","source":"cache","user":{"id":"100","name":"Katherine Johnson","age":101,"active":true}}
 ```
 
-Delete it from repository and cache:
+Delete it from the repository and cache:
 
 ```shell
 curl -X DELETE 'localhost:8080/users/100'
@@ -326,26 +327,31 @@ HTTP 200
 {"repository_loads":{"404":1}}
 ```
 
-The second request does not call the repository because the not-found result is cached for `negativeTTL`.
+The second request does not call the repository because the not-found result is cached.
 
-Wait until negative cache expires and try again:
+The negative TTL is 30 seconds and the cache applies up to 5 seconds of jitter, so wait long enough for the entry to
+expire:
 
 ```shell
-sleep 30
+sleep 36
 curl 'localhost:8080/users/404/load'
 curl 'localhost:8080/stats'
 ```
 
-Expected result:
+Expected results:
 
 ```text
+HTTP 404
+{"error":"key not found"}
+
 HTTP 200
 {"repository_loads":{"404":2}}
 ```
 
 ## Cleanup
 
-Deletes all cache example keys by prefix and resets repository stats.
+Deletes the known sample cache keys for IDs `42`, `7`, `100`, and `404`, then resets the in-memory repository and load
+counters.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'
@@ -355,7 +361,7 @@ Expected result:
 
 ```text
 HTTP 200
-all keys with xredis:cache:* prefix are deleted
+{"status":"reset"}
 ```
 
 ## Stop services

@@ -153,6 +153,11 @@ linters:
       - builtin/
       - examples/
       - _tmp/
+    rules:
+      - path: _test\.go
+        linters:
+          - revive
+        text: "dot-imports"
 
 issues:
   max-same-issues: 0

@@ -38,6 +38,39 @@ tasks:
       - task: vendor-root
       - task: test-root
 
+  bench-cache:
+    desc: "Benchmark cache value decoding"
+    env:
+      GOMAXPROCS: "1"
+    cmds:
+      - |
+        go test -mod=vendor \
+          -run='^$' \
+          -bench='^BenchmarkDecodeCacheValue$' \
+          -benchmem \
+          -benchtime=1s \
+          -count=5 \
+          > bench.txt
+
+  bench-cache-parallel:
+    desc: "Benchmark parallel cache value decoding"
+    cmds:
+      - |
+        go test -mod=vendor \
+          -run='^$' \
+          -bench='^BenchmarkDecodeCacheValueParallel$' \
+          -benchmem \
+          -benchtime=1s \
+          -count=5 \
+          -cpu=1,4,8,20 \
+          > parallel.txt
+
+  bench-cache-all:
+    desc: "Run all cache value decoding benchmarks"
+    cmds:
+      - task: bench-cache
+      - task: bench-cache-parallel
+
   check-examples:
     desc: "Check example modules"
     cmds:

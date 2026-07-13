@@ -5,26 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
+	"reflect"
 	"time"
 
 	rdb "github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
-// Cache entries are stored with a one-byte marker prefix.
+// cacheNegativeMarker is the reserved value used for cached not-found results.
 //
-// Format:
-//
-//	[0]       cached not-found result
-//	[1] data  cached encoded value
-//
-// The marker is not part of the encoded value payload.
-// It allows Cache to distinguish regular values from cached not-found results
-// regardless of the configured Codec.
-const (
-	cacheNegativeMarker byte = 0
-	cacheValueMarker    byte = 1
-)
+// Regular cache values are stored without a marker so they can be read through
+// the regular Redis client. The exact value []byte{cacheNegativeMarker} is
+// reserved and must not be used as a regular cache value.
+const cacheNegativeMarker byte = 0
 
 // cacheState represents the status of a cache entry read from Redis.
 type cacheState uint8
@@ -40,12 +34,6 @@ const (
 	cacheNegative
 )
 
-// cacheLoadResult preserves the concrete generic type when a loaded value is
-// passed through singleflight as any.
-type cacheLoadResult[T any] struct {
-	value T
-}
-
 // Loader loads a value when it is missing from cache.
 //
 // On success, it should return a value and nil error.
@@ -56,9 +44,12 @@ type Loader[T any] func(ctx context.Context) (T, error)
 
 // Cache is a typed Redis cache.
 //
-// Values returned by Cache are not deep-copied.
-// If T is a pointer or contains reference fields such as slices or maps,
-// callers should treat returned values as immutable or clone them before mutation.
+// Redis-native values are encoded and decoded by go-redis. Other values are
+// encoded and decoded by the configured Codec.
+//
+// Values returned by Cache are not deep-copied. If T is a pointer or contains
+// reference fields such as slices or maps, callers should treat returned values
+// as immutable or clone them before mutation.
 type Cache[T any] struct {
 	client *Client
 
@@ -67,8 +58,9 @@ type Cache[T any] struct {
 	jitter      time.Duration
 	negativeTTL time.Duration
 
-	codec      Codec
-	isNotFound func(error) bool
+	codec        Codec
+	redisEncoded bool
+	isNotFound   func(error) bool
 
 	group singleflight.Group
 }
@@ -88,6 +80,10 @@ type cacheOptions struct {
 
 // NewCache creates a typed Redis cache.
 func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
+	if err := validateCacheType[T](); err != nil {
+		return nil, err
+	}
+
 	options := cacheOptions{
 		codec:      JSONCodec{},
 		isNotFound: defaultCacheIsNotFound,
@@ -108,14 +104,24 @@ func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
 	}
 
 	return &Cache[T]{
-		client:      client,
-		prefix:      options.prefix,
-		ttl:         options.ttl,
-		jitter:      options.jitter,
-		negativeTTL: options.negativeTTL,
-		codec:       options.codec,
-		isNotFound:  options.isNotFound,
+		client:       client,
+		prefix:       options.prefix,
+		ttl:          options.ttl,
+		jitter:       options.jitter,
+		negativeTTL:  options.negativeTTL,
+		codec:        options.codec,
+		redisEncoded: isRedisEncoded[T](),
+		isNotFound:   options.isNotFound,
 	}, nil
+}
+
+func validateCacheType[T any]() error {
+	typ := reflect.TypeFor[T]()
+	if typ.Kind() == reflect.Interface {
+		return fmt.Errorf("%w: interface cache type %s is not supported", ErrInvalidCache, typ)
+	}
+
+	return nil
 }
 
 func validateCacheOptions(client *Client, opts cacheOptions) error {
@@ -234,10 +240,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 	}
 
 	ch := c.group.DoChan(c.key(key), func() (any, error) {
-		value, err := c.load(ctx, key, loader)
-		return cacheLoadResult[T]{
-			value: value,
-		}, err
+		return c.load(ctx, key, loader)
 	})
 
 	select {
@@ -249,23 +252,23 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 			return zero, result.Err
 		}
 
-		loaded, ok := result.Val.(cacheLoadResult[T])
+		loaded, ok := result.Val.(T)
 		if !ok {
 			return zero, ErrInvalidCacheEntry
 		}
 
-		return loaded.value, nil
+		return loaded, nil
 	}
 }
 
 // Set stores a typed value in cache using default TTL.
 func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
-	data, err := c.encode(value)
+	encoded, err := c.encode(value)
 	if err != nil {
 		return err
 	}
 
-	return c.client.conn.Set(ctx, c.key(key), data, c.expiration(c.ttl)).Err()
+	return c.client.conn.Set(ctx, c.key(key), encoded, c.expiration(c.ttl)).Err()
 }
 
 // Delete removes a value from cache.
@@ -276,47 +279,6 @@ func (c *Cache[T]) Delete(ctx context.Context, key string) error {
 // Forget removes an in-flight loader for the key from singleflight.
 func (c *Cache[T]) Forget(key string) {
 	c.group.Forget(c.key(key))
-}
-
-// CompareAndDelete deletes a cached value only when it equals expected.
-//
-// It returns deleted=false when the key is missing, contains a negative cache
-// entry, or contains a different value.
-func (c *Cache[T]) CompareAndDelete(ctx context.Context, key string, expected T) (bool, error) {
-	expectedData, err := c.encode(expected)
-	if err != nil {
-		return false, err
-	}
-
-	return c.client.compareAndDelete(
-		ctx,
-		c.key(key),
-		expectedData,
-	)
-}
-
-// CompareAndSwap replaces a cached value only when it equals expected.
-//
-// A successful swap refreshes the cache entry expiration using the configured
-// cache TTL and jitter.
-func (c *Cache[T]) CompareAndSwap(ctx context.Context, key string, expected, value T) (bool, error) {
-	expectedData, err := c.encode(expected)
-	if err != nil {
-		return false, err
-	}
-
-	valueData, err := c.encode(value)
-	if err != nil {
-		return false, err
-	}
-
-	return c.client.compareAndSwap(
-		ctx,
-		c.key(key),
-		expectedData,
-		valueData,
-		c.expiration(c.ttl),
-	)
 }
 
 func (c *Cache[T]) load(
@@ -351,7 +313,8 @@ func (c *Cache[T]) load(
 func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 	var zero T
 
-	data, err := c.client.conn.Get(ctx, c.key(key)).Bytes()
+	cmd := c.client.conn.Get(ctx, c.key(key))
+	data, err := cmd.Bytes()
 	if err != nil {
 		if errors.Is(err, rdb.Nil) {
 			return zero, cacheMiss, nil
@@ -360,29 +323,16 @@ func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 		return zero, cacheMiss, err
 	}
 
-	if len(data) == 0 {
-		return zero, cacheMiss, ErrInvalidCacheEntry
-	}
-
-	switch data[0] {
-	case cacheNegativeMarker:
-		if len(data) != 1 {
-			return zero, cacheMiss, ErrInvalidCacheEntry
-		}
-
+	if len(data) == 1 && data[0] == cacheNegativeMarker {
 		return zero, cacheNegative, nil
-
-	case cacheValueMarker:
-		value, err := c.decode(data[1:])
-		if err != nil {
-			return zero, cacheMiss, err
-		}
-
-		return value, cacheHit, nil
-
-	default:
-		return zero, cacheMiss, ErrInvalidCacheEntry
 	}
+
+	value, err := c.decode(cmd, data)
+	if err != nil {
+		return zero, cacheMiss, err
+	}
+
+	return value, cacheHit, nil
 }
 
 func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
@@ -390,32 +340,28 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 		return nil
 	}
 
-	ttl := c.expiration(c.negativeTTL)
-
-	return c.client.conn.Set(ctx, c.key(key), []byte{cacheNegativeMarker}, ttl).Err()
+	return c.client.conn.Set(
+		ctx,
+		c.key(key),
+		[]byte{cacheNegativeMarker},
+		c.expiration(c.negativeTTL),
+	).Err()
 }
 
-func (c *Cache[T]) encode(value T) ([]byte, error) {
-	data, err := c.codec.Marshal(value)
-	if err != nil {
-		return nil, err
+func (c *Cache[T]) encode(value T) (any, error) {
+	if c.redisEncoded {
+		return value, nil
 	}
 
-	out := make([]byte, len(data)+1)
-	out[0] = cacheValueMarker
-	copy(out[1:], data)
-
-	return out, nil
+	return c.codec.Marshal(value)
 }
 
-func (c *Cache[T]) decode(data []byte) (T, error) {
-	var value T
-
-	if err := c.codec.Unmarshal(data, &value); err != nil {
-		return value, err
+func (c *Cache[T]) decode(cmd *rdb.StringCmd, data []byte) (T, error) {
+	if c.redisEncoded {
+		return scanCacheValue[T](cmd)
 	}
 
-	return value, nil
+	return decodeCacheValue[T](c.codec, data)
 }
 
 func (c *Cache[T]) key(key string) string {
@@ -440,4 +386,81 @@ func normalizeCacheNotFound(err error) error {
 
 func defaultCacheIsNotFound(err error) bool {
 	return errors.Is(err, ErrKeyNotFound) || errors.Is(err, rdb.Nil)
+}
+
+func isRedisEncoded[T any]() bool {
+	var value T
+
+	switch any(value).(type) {
+	case string, *string,
+		[]byte,
+		int, *int,
+		int8, *int8,
+		int16, *int16,
+		int32, *int32,
+		int64, *int64,
+		uint, *uint,
+		uint8, *uint8,
+		uint16, *uint16,
+		uint32, *uint32,
+		uint64, *uint64,
+		float32, *float32,
+		float64, *float64,
+		bool, *bool,
+		time.Time, *time.Time,
+		time.Duration, *time.Duration,
+		net.IP:
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeCacheInto[T any](decode func(dst any) error) (T, error) {
+	var zero T
+
+	typ := reflect.TypeFor[T]()
+
+	if typ.Kind() != reflect.Pointer {
+		var value T
+
+		if err := decode(&value); err != nil {
+			return zero, err
+		}
+
+		return value, nil
+	}
+
+	value := reflect.New(typ.Elem())
+
+	if err := decode(value.Interface()); err != nil {
+		return zero, err
+	}
+
+	// reflect.New returns PointerTo(typ.Elem()), which may differ
+	// from T when T is a defined pointer type.
+	if value.Type() != typ {
+		if !value.CanConvert(typ) {
+			return zero, ErrInvalidCacheEntry
+		}
+
+		value = value.Convert(typ)
+	}
+
+	decoded, ok := value.Interface().(T)
+	if !ok {
+		return zero, ErrInvalidCacheEntry
+	}
+
+	return decoded, nil
+}
+
+func scanCacheValue[T any](cmd *rdb.StringCmd) (T, error) {
+	return decodeCacheInto[T](cmd.Scan)
+}
+
+func decodeCacheValue[T any](codec Codec, data []byte) (T, error) {
+	return decodeCacheInto[T](func(dst any) error {
+		return codec.Unmarshal(data, dst)
+	})
 }
