@@ -126,3 +126,16 @@ tasks:
         -w {{.WORK_DIR}}
         golangci/golangci-lint:{{.LINTER_VER}}
         golangci-lint run --timeout 5m --fix --modules-download-mode vendor
+
+  coverage:
+    desc: Run tests and print total coverage
+    cmds:
+      - go test -tags=integration -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out | grep total
+
+  coverage:html:
+    desc: Generate HTML coverage report
+    deps:
+      - coverage
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
