@@ -76,6 +76,50 @@ The HTTP server starts on:
 localhost:8080
 ```
 
+## Metrics
+
+Prometheus metrics are available at:
+
+```shell
+curl 'http://localhost:8080/metrics'
+```
+
+Useful rate limiter metrics for this example include:
+
+```text
+redis_client_rate_limiter_decisions_total
+redis_client_rate_limiter_duration_seconds
+```
+
+Rate limit decisions:
+
+```text
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="fixed_window",redis_client_rate_limiter_outcome="allowed"}
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="fixed_window",redis_client_rate_limiter_outcome="rejected"}
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="sliding_window",redis_client_rate_limiter_outcome="allowed"}
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="sliding_window",redis_client_rate_limiter_outcome="rejected"}
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="token_bucket",redis_client_rate_limiter_outcome="allowed"}
+redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="token_bucket",redis_client_rate_limiter_outcome="rejected"}
+```
+
+Check rate limit decision metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_decisions_total'
+```
+
+Check rate limiter duration metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_duration_seconds'
+```
+
+Check duration counts by algorithm and outcome:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_duration_seconds_count'
+```
+
 ## Health check
 
 ```shell
@@ -141,7 +185,8 @@ first 5 requests -> HTTP 200
 next requests    -> HTTP 429
 ```
 
-Sliding window is more accurate than fixed window, but stores one sorted-set entry per accepted request within the window.
+Sliding window is more accurate than fixed window, but stores one sorted-set entry per accepted request within the
+window.
 
 ## Token-bucket flow
 
@@ -193,7 +238,8 @@ token-bucket   -> one key
 
 So these operations are safe to use with Redis Cluster.
 
-Avoid using a shared hash tag in the rate-limiter prefix, because that can route many user keys to the same cluster slot and create a hot shard.
+Avoid using a shared hash tag in the rate-limiter prefix, because that can route many user keys to the same cluster slot
+and create a hot shard.
 
 Good:
 

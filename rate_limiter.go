@@ -296,26 +296,28 @@ func (l *RateLimiter) AllowFixedWindow(
 	key string,
 	limit RateLimit,
 ) (RateLimitDecision, error) {
-	if err := l.validateKey(key); err != nil {
-		return RateLimitDecision{}, err
-	}
+	return l.runDecision(ctx, rateLimitAlgorithmFixedWindow, func() (RateLimitDecision, error) {
+		if err := l.validateKey(key); err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	if err := validateRateLimit(limit); err != nil {
-		return RateLimitDecision{}, err
-	}
+		if err := validateRateLimit(limit); err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	result, err := rateLimitFixedWindowScript.Run(
-		ctx,
-		l.client.conn,
-		[]string{l.key(key)},
-		limit.Limit,
-		durationToMs(limit.Window),
-	).Slice()
-	if err != nil {
-		return RateLimitDecision{}, err
-	}
+		result, err := rateLimitFixedWindowScript.Run(
+			ctx,
+			l.client.conn,
+			[]string{l.key(key)},
+			limit.Limit,
+			durationToMs(limit.Window),
+		).Slice()
+		if err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	return parseRateLimitDecision(result)
+		return parseRateLimitDecision(result)
+	})
 }
 
 // AllowSlidingWindow checks a sliding-window rate limit.
@@ -327,27 +329,29 @@ func (l *RateLimiter) AllowSlidingWindow(
 	key string,
 	limit RateLimit,
 ) (RateLimitDecision, error) {
-	if err := l.validateKey(key); err != nil {
-		return RateLimitDecision{}, err
-	}
+	return l.runDecision(ctx, rateLimitAlgorithmSlidingWindow, func() (RateLimitDecision, error) {
+		if err := l.validateKey(key); err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	if err := validateRateLimit(limit); err != nil {
-		return RateLimitDecision{}, err
-	}
+		if err := validateRateLimit(limit); err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	result, err := rateLimitSlidingWindowScript.Run(
-		ctx,
-		l.client.conn,
-		[]string{l.key(key)},
-		limit.Limit,
-		durationToMs(limit.Window),
-		l.nextMember(),
-	).Slice()
-	if err != nil {
-		return RateLimitDecision{}, err
-	}
+		result, err := rateLimitSlidingWindowScript.Run(
+			ctx,
+			l.client.conn,
+			[]string{l.key(key)},
+			limit.Limit,
+			durationToMs(limit.Window),
+			l.nextMember(),
+		).Slice()
+		if err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	return parseRateLimitDecision(result)
+		return parseRateLimitDecision(result)
+	})
 }
 
 // AllowTokenBucket checks a token-bucket rate limit.
@@ -359,28 +363,60 @@ func (l *RateLimiter) AllowTokenBucket(
 	key string,
 	limit TokenBucketRateLimit,
 ) (RateLimitDecision, error) {
-	if err := l.validateKey(key); err != nil {
-		return RateLimitDecision{}, err
-	}
+	return l.runDecision(ctx, rateLimitAlgorithmTokenBucket, func() (RateLimitDecision, error) {
+		if err := l.validateKey(key); err != nil {
+			return RateLimitDecision{}, err
+		}
 
-	burst, err := validateTokenBucketRateLimit(limit)
+		burst, err := validateTokenBucketRateLimit(limit)
+		if err != nil {
+			return RateLimitDecision{}, err
+		}
+
+		result, err := rateLimitTokenBucketScript.Run(
+			ctx,
+			l.client.conn,
+			[]string{l.key(key)},
+			burst,
+			limit.Limit,
+			durationToMs(limit.Window),
+		).Slice()
+		if err != nil {
+			return RateLimitDecision{}, err
+		}
+
+		return parseRateLimitDecision(result)
+	})
+}
+
+func (l *RateLimiter) runDecision(
+	ctx context.Context,
+	algorithm string,
+	fn func() (RateLimitDecision, error),
+) (RateLimitDecision, error) {
+	start := time.Now()
+	outcome := rateLimitOutcomeError
+
+	defer func() {
+		l.client.metrics.recordRateLimitDecision(
+			ctx,
+			algorithm,
+			outcome,
+			time.Since(start),
+		)
+	}()
+
+	decision, err := fn()
 	if err != nil {
-		return RateLimitDecision{}, err
+		return decision, err
 	}
 
-	result, err := rateLimitTokenBucketScript.Run(
-		ctx,
-		l.client.conn,
-		[]string{l.key(key)},
-		burst,
-		limit.Limit,
-		durationToMs(limit.Window),
-	).Slice()
-	if err != nil {
-		return RateLimitDecision{}, err
+	outcome = rateLimitOutcomeRejected
+	if decision.Allowed {
+		outcome = rateLimitOutcomeAllowed
 	}
 
-	return parseRateLimitDecision(result)
+	return decision, nil
 }
 
 func (l *RateLimiter) validateKey(key string) error {

@@ -77,6 +77,54 @@ The HTTP server starts on:
 localhost:8080
 ```
 
+## Metrics
+
+Prometheus metrics are available at:
+
+```shell
+curl 'http://localhost:8080/metrics'
+```
+
+Useful lock metrics for this example include:
+
+```text
+redis_client_lock_operations_total
+```
+
+Lease lock operations:
+
+```text
+redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="acquire",redis_client_lock_outcome="success"}
+redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="acquire",redis_client_lock_outcome="contended"}
+redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="extend",redis_client_lock_outcome="success"}
+redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="unlock",redis_client_lock_outcome="success"}
+```
+
+Fenced lock operations:
+
+```text
+redis_client_lock_operations_total{redis_client_lock_type="fenced",redis_client_lock_operation="acquire",redis_client_lock_outcome="success"}
+redis_client_lock_operations_total{redis_client_lock_type="fenced",redis_client_lock_operation="unlock",redis_client_lock_outcome="success"}
+```
+
+Check all lock metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_operations_total'
+```
+
+Check contended acquisitions:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_operation="acquire"'   | grep 'redis_client_lock_outcome="contended"'
+```
+
+Check fenced lock operations:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_type="fenced"'
+```
+
 ## Health check
 
 ```shell
