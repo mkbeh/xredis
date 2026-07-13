@@ -163,6 +163,8 @@ jobs:
               # of the version declared by the standalone example module.
               go work init . "$root"
 
+              go mod tidy
+              git diff --exit-code -- go.mod go.sum
               go mod verify
               go vet ./...
               go test -race -count=1 ./...

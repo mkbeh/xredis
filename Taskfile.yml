@@ -21,8 +21,9 @@ tasks:
       - task: test-root
 
   before-commit:
-    desc: "Run example checks and full cycle"
+    desc: "Tidy example modules and run all checks"
     cmds:
+      - task: tidy-examples
       - task: check-examples
       - task: run
 
@@ -71,23 +72,51 @@ tasks:
       - task: bench-cache
       - task: bench-cache-parallel
 
-  check-examples:
-    desc: "Check example modules"
+  tidy-examples:
+    desc: "Tidy example module dependencies"
     cmds:
       - |
-        set -e
+        set -euo pipefail
 
-        find ./examples -name go.mod -print | sort | while IFS= read -r mod; do
+        find ./examples -name go.mod -print |
+        sort |
+        while IFS= read -r mod; do
           dir="$(dirname "$mod")"
           echo "==> $dir"
 
           (
             cd "$dir"
-            rm -rf vendor
-            go get ./...
-            go mod tidy -v
-            go mod vendor
-            go test ./...
+            GOWORK=off go mod tidy -v
+          )
+        done
+
+  check-examples:
+    desc: "Check example modules against the local xredis checkout"
+    cmds:
+      - |
+        set -euo pipefail
+
+        root="$(pwd)"
+
+        find ./examples -name go.mod -print |
+        sort |
+        while IFS= read -r mod; do
+          dir="$(dirname "$mod")"
+          echo "==> $dir"
+
+          (
+            workspace="$(mktemp -d)"
+            trap 'rm -rf "$workspace"' EXIT
+
+            (
+              cd "$workspace"
+              GOWORK=off go work init "$root" "$root/${dir#./}"
+            )
+
+            cd "$dir"
+            GOWORK="$workspace/go.work" go mod verify
+            GOWORK="$workspace/go.work" go vet ./...
+            GOWORK="$workspace/go.work" go test -race -count=1 ./...
           )
         done
 
