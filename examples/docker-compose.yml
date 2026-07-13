@@ -4,6 +4,7 @@ services:
     container_name: sample-redis
     profiles:
       - standalone
+      - otel
     command: [ "redis-server", "--appendonly", "yes" ]
     ports:
       - "6379:6379"
@@ -240,6 +241,20 @@ services:
     networks:
       - sample-network
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: sample-jaeger
+    profiles:
+      - otel
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks:
+      - sample-network
+
   redisinsight:
     image: redis/redisinsight:latest
     container_name: sample-redisinsight
@@ -248,6 +263,7 @@ services:
       - ring
       - sentinel
       - cluster
+      - otel
     ports:
       - "5540:5540"
     volumes:
