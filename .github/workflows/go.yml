@@ -1,0 +1,169 @@
+name: Go
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOWORK: "off"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check module files
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build packages
+        run: go build ./...
+
+  test:
+    name: Tests (Redis ${{ matrix.redis }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOWORK: "off"
+      REDIS_ADDR: localhost:6379
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        redis:
+          - 7-alpine
+          - 8-alpine
+
+    services:
+      redis:
+        image: redis:${{ matrix.redis }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Run tests
+        run: |
+          go test \
+            -tags=integration \
+            -race \
+            -shuffle=on \
+            -count=1 \
+            -covermode=atomic \
+            -coverpkg=./... \
+            -coverprofile=coverage.out \
+            ./...
+
+      - name: Print coverage summary
+        run: go tool cover -func=coverage.out
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-redis-${{ matrix.redis }}
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload coverage to Codecov
+        if: matrix.redis == '8-alpine' && env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: coverage.out
+          flags: tests
+          name: xredis
+          fail_ci_if_error: true
+          disable_search: true
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/**/go.sum
+
+      - name: Build and test example modules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          root="$(pwd)"
+
+          while IFS= read -r -d '' mod; do
+            dir="$(dirname "$mod")"
+            echo "::group::$dir"
+
+            (
+              cd "$dir"
+
+              rm -f go.work go.work.sum
+              trap 'rm -f go.work go.work.sum' EXIT
+
+              # Resolve github.com/mkbeh/xredis to the current checkout instead
+              # of the version declared by the standalone example module.
+              go work init . "$root"
+
+              go mod verify
+              go vet -mod=mod ./...
+              go test -mod=mod -race -count=1 ./...
+            )
+
+            echo "::endgroup::"
+          done < <(find examples -name go.mod -print0 | sort -z)

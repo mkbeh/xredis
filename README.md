@@ -4,12 +4,13 @@
 
 **Lightweight Redis wrapper for Go, built on top of [go-redis](https://github.com/redis/go-redis).**
 
-![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Go](https://github.com/mkbeh/xredis/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/mkbeh/xredis/actions/workflows/go.yml)
+[![codecov](https://codecov.io/gh/mkbeh/xredis/branch/main/graph/badge.svg)](https://codecov.io/gh/mkbeh/xredis)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mkbeh/xredis.svg)](https://pkg.go.dev/github.com/mkbeh/xredis)
 
 </div>
 
-`xredis` builds on the [`go-redis`](https://github.com/redis/go-redis) client with a compact API for common Redis
+`xredis` builds on the [go-redis](https://github.com/redis/go-redis) client with a compact API for common Redis
 workflows and application-level reliability patterns. It provides focused helpers for native and structured values,
 typed caching, atomic compare operations (CAS/CAD), lease and fenced locks, distributed rate limiting, bulk pipelines,
 topology-wide scans, and OpenTelemetry metrics and tracing.
@@ -119,7 +120,7 @@ its connection and routing settings.
 ### Configuration capabilities
 
 Configuration structs are plain Go structs and can be loaded with any configuration library. For a complete
-environment-based setup, see [`examples/env`](examples/env).
+environment-based setup, see [examples/env](examples/env).
 
 Configuration structs and constructor options cover:
 
