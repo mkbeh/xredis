@@ -5,8 +5,8 @@
 **Lightweight Redis wrapper for Go, built on top of [go-redis](https://github.com/redis/go-redis).**
 
 [![Go](https://github.com/mkbeh/xredis/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/mkbeh/xredis/actions/workflows/go.yml)
-[![codecov](https://codecov.io/gh/mkbeh/xredis/branch/main/graph/badge.svg)](https://codecov.io/gh/mkbeh/xredis)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mkbeh/xredis.svg)](https://pkg.go.dev/github.com/mkbeh/xredis)
+[![codecov](https://codecov.io/gh/mkbeh/xredis/branch/main/graph/badge.svg)](https://codecov.io/gh/mkbeh/xredis)
 
 </div>
 
