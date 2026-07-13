@@ -36,7 +36,7 @@ func newMetricsRuntime() (*metricsRuntime, error) {
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(
-			semconv.ServiceName("xredis-cache-example"),
+			semconv.ServiceName("xredis-locks-example"),
 			semconv.ServiceVersion("dev"),
 		),
 	)

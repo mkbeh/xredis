@@ -30,7 +30,7 @@ local counter_ttl = tonumber(ARGV[3])
 
 redis.call("SET", KEYS[1], ARGV[1], "PX", lock_ttl)
 
-if counter_ttl > 0 then
+if counter_ttl > 0 then	
 	redis.call("PEXPIRE", KEYS[2], counter_ttl)
 end
 
@@ -207,17 +207,38 @@ func (c *Client) TryFencedLockWithToken(
 	ttl time.Duration,
 	opts ...FencedLockOption,
 ) (*FencedLock, bool, error) {
-	if c == nil || c.conn == nil || token == "" {
+	if c == nil {
 		return nil, false, ErrInvalidLock
 	}
 
-	if err := validateFencedLockKeys(key, fencingKey); err != nil {
-		return nil, false, err
-	}
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		c.metrics.recordLockOperation(
+			ctx,
+			lockTypeFenced,
+			lockOperationAcquire,
+			metricOutcome,
+		)
+	}()
 
 	options := newFencedLockOptions(opts...)
 
-	if err := validateFencedLockTTL(ttl, options.counterTTL); err != nil {
+	lock := &FencedLock{
+		lock: &Lock{
+			client: c,
+			key:    key,
+			token:  token,
+		},
+		fencingKey: fencingKey,
+		counterTTL: options.counterTTL,
+	}
+
+	if err := lock.validate(); err != nil {
+		return nil, false, err
+	}
+
+	if err := validateFencedLockTTL(ttl, lock.counterTTL); err != nil {
 		return nil, false, err
 	}
 
@@ -239,28 +260,55 @@ func (c *Client) TryFencedLockWithToken(
 	}
 
 	if !acquired {
+		metricOutcome = lockOutcomeContended
 		return nil, false, nil
 	}
 
-	return &FencedLock{
-		lock: &Lock{
-			client: c,
-			key:    key,
-			token:  token,
-		},
-		fencingKey:   fencingKey,
-		fencingToken: fencingToken,
-		counterTTL:   options.counterTTL,
-	}, true, nil
+	lock.fencingToken = fencingToken
+	metricOutcome = lockOutcomeSuccess
+
+	return lock, true, nil
 }
 
 // Unlock releases the lock if it is still owned by this FencedLock.
 func (l *FencedLock) Unlock(ctx context.Context) error {
+	if l == nil || l.lock.client == nil {
+		return ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.lock.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeFenced,
+			lockOperationUnlock,
+			metricOutcome,
+		)
+	}()
+
 	if err := l.validate(); err != nil {
 		return err
 	}
 
-	return l.lock.Unlock(ctx)
+	deleted, err := l.lock.client.CompareAndDelete(
+		ctx,
+		l.lock.key,
+		l.lock.token,
+	)
+	if err != nil {
+		return err
+	}
+
+	if !deleted {
+		metricOutcome = lockOutcomeNotOwned
+
+		return ErrLockNotOwned
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return nil
 }
 
 // Extend extends the lock TTL if it is still owned by this FencedLock.
@@ -268,6 +316,21 @@ func (l *FencedLock) Unlock(ctx context.Context) error {
 // If fencing counter TTL is configured, it is refreshed after a successful lock
 // extension.
 func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
+	if l == nil || l.lock.client == nil {
+		return false, ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.lock.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeFenced,
+			lockOperationExtend,
+			metricOutcome,
+		)
+	}()
+
 	if err := l.validate(); err != nil {
 		return false, err
 	}
@@ -288,7 +351,15 @@ func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error
 		return false, err
 	}
 
-	return extended == 1, nil
+	if extended != 1 {
+		metricOutcome = lockOutcomeNotOwned
+
+		return false, nil
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return true, nil
 }
 
 func (l *FencedLock) validate() error {

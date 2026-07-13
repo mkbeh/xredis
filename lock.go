@@ -63,8 +63,23 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 // Token must be unique per lock attempt. Reusing tokens across independent lock
 // attempts may make ownership checks unsafe.
 func (c *Client) TryLockWithToken(ctx context.Context, key, token string, ttl time.Duration) (*Lock, bool, error) {
-	if c == nil || c.conn == nil || key == "" || token == "" {
+	if c == nil {
 		return nil, false, ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		c.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationAcquire,
+			metricOutcome,
+		)
+	}()
+
+	if err := validateLock(c, key, token); err != nil {
+		return nil, false, err
 	}
 
 	if ttl <= 0 {
@@ -77,8 +92,11 @@ func (c *Client) TryLockWithToken(ctx context.Context, key, token string, ttl ti
 	}
 
 	if !acquired {
+		metricOutcome = lockOutcomeContended
 		return nil, false, nil
 	}
+
+	metricOutcome = lockOutcomeSuccess
 
 	return &Lock{
 		client: c,
@@ -92,6 +110,21 @@ func (c *Client) TryLockWithToken(ctx context.Context, key, token string, ttl ti
 // It returns ErrLockNotOwned if the lock expired, was deleted, or is owned by
 // another token.
 func (l *Lock) Unlock(ctx context.Context) error {
+	if l == nil || l.client == nil {
+		return ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationUnlock,
+			metricOutcome,
+		)
+	}()
+
 	if err := l.validate(); err != nil {
 		return err
 	}
@@ -102,8 +135,11 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	}
 
 	if !deleted {
+		metricOutcome = lockOutcomeNotOwned
 		return ErrLockNotOwned
 	}
+
+	metricOutcome = lockOutcomeSuccess
 
 	return nil
 }
@@ -113,6 +149,21 @@ func (l *Lock) Unlock(ctx context.Context) error {
 // It returns false when the lock expired, was deleted, or is owned by another
 // token.
 func (l *Lock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
+	if l == nil || l.client == nil {
+		return false, ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationExtend,
+			metricOutcome,
+		)
+	}()
+
 	if err := l.validate(); err != nil {
 		return false, err
 	}
@@ -126,11 +177,34 @@ func (l *Lock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
 		return false, err
 	}
 
-	return extended == 1, nil
+	if extended != 1 {
+		metricOutcome = lockOutcomeNotOwned
+
+		return false, nil
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return true, nil
 }
 
 func (l *Lock) validate() error {
-	if l == nil || l.client == nil || l.client.conn == nil || l.key == "" || l.token == "" {
+	if l == nil {
+		return ErrInvalidLock
+	}
+
+	return validateLock(
+		l.client,
+		l.key,
+		l.token,
+	)
+}
+
+func validateLock(client *Client, key, token string) error {
+	if client == nil ||
+		client.conn == nil ||
+		key == "" ||
+		token == "" {
 		return ErrInvalidLock
 	}
 
