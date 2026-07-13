@@ -273,6 +273,23 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var err error
 
+	metrics, err := newMetricsRuntime()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	defer func() {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
+		defer cancel()
+
+		if shutdownErr := metrics.Shutdown(ctx); shutdownErr != nil {
+			log.Println("unable to shut down metrics:", shutdownErr)
+		}
+	}()
+
 	client, err = xredis.NewClient(
 		xredis.WithClientConfig(&xredis.ClientConfig{
 			Addr: redisAddr,
@@ -308,6 +325,8 @@ func main() {
 	mux.HandleFunc("POST /counters/{id}/increment", incrementCounterHandler)
 
 	mux.HandleFunc("DELETE /sample/{id}", cleanupHandler)
+
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	server := &http.Server{
 		Addr:              httpAddr,

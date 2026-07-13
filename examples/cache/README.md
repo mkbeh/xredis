@@ -11,6 +11,7 @@ This example shows how to use `xredis.Cache[T]` in a simple REST API service.
 * Singleflight for concurrent cache misses
 * TTL jitter
 * Negative caching for not-found results
+* Native Redis and cache-level OpenTelemetry metrics
 
 ## Configuration
 
@@ -78,6 +79,59 @@ The HTTP server starts on:
 
 ```text
 localhost:8080
+```
+
+## Metrics
+
+Prometheus metrics are available at:
+
+```shell
+curl 'http://localhost:8080/metrics'
+```
+
+Useful cache metrics for this example include:
+
+```text
+redis_client_cache_requests_total
+redis_client_cache_loader_duration_seconds
+redis_client_cache_singleflight_shared_total
+```
+
+Cache lookup results:
+
+```text
+redis_client_cache_requests_total{redis_client_cache_operation="get",redis_client_cache_result="hit"}
+redis_client_cache_requests_total{redis_client_cache_operation="get",redis_client_cache_result="miss"}
+redis_client_cache_requests_total{redis_client_cache_operation="get_or_load",redis_client_cache_result="hit"}
+redis_client_cache_requests_total{redis_client_cache_operation="get_or_load",redis_client_cache_result="miss"}
+redis_client_cache_requests_total{redis_client_cache_operation="get_or_load",redis_client_cache_result="negative_hit"}
+redis_client_cache_requests_total{redis_client_cache_operation="get_or_load",redis_client_cache_result="error"}
+```
+
+Check cache request metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics' | grep 'redis_client_cache_requests_total'
+```
+
+Check loader duration metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics' | grep 'redis_client_cache_loader_duration_seconds'
+```
+
+Check loader outcomes:
+
+```shell
+curl -s 'http://localhost:8080/metrics' \
+  | grep 'redis_client_cache_loader_duration_seconds_count'
+```
+
+Check requests sharing a singleflight result:
+
+```shell
+curl -s 'http://localhost:8080/metrics' \
+  | grep 'redis_client_cache_singleflight_shared_total'
 ```
 
 ## Health check

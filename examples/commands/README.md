@@ -77,6 +77,44 @@ The HTTP server starts on:
 localhost:8080
 ```
 
+## Metrics
+
+Prometheus metrics are available at:
+
+```shell
+curl 'http://localhost:8080/metrics'
+```
+
+Useful Redis client metrics for this example include:
+
+```text
+db_client_operation_duration_seconds
+db_client_connection_count
+db_client_connection_create_time_seconds
+db_client_connection_wait_time_seconds
+db_client_connection_use_time_seconds
+db_client_connection_pending_requests
+redis_client_errors_total
+```
+
+Check Redis command duration metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'db_client_operation_duration_seconds'
+```
+
+Check connection pool metrics:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep -E 'db_client_connection_(count|create_time|wait_time|use_time|pending_requests)'
+```
+
+Check Redis client errors:
+
+```shell
+curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_errors_total'
+```
+
 All examples below use the sample ID `42`.
 
 ## Health check

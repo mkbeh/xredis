@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,6 +60,9 @@ type options struct {
 	pushNotificationProcessor push.NotificationProcessor
 	maintNotificationsConfig  *maintnotifications.Config
 
+	// Wrapper metric labels.
+	metricLabels map[string]string
+
 	// Tracing.
 	traceOptions []redisotel.TracingOption
 }
@@ -71,7 +75,8 @@ type credentialsOptions struct {
 
 func newOptions(opts ...Option) *options {
 	options := &options{
-		codec: JSONCodec{},
+		codec:        JSONCodec{},
+		metricLabels: make(map[string]string),
 	}
 
 	for _, opt := range opts {
@@ -376,6 +381,17 @@ func WithRingConsistentHash(fn func(shards []string) rdb.ConsistentHash) Option 
 		if fn != nil {
 			opts.ringConsistentHash = fn
 		}
+	})
+}
+
+// Metrics options.
+
+func WithMetricLabel(key, value string) Option {
+	return optionFunc(func(opts *options) {
+		if key == "" || strings.HasPrefix(key, "redis.client.") {
+			return
+		}
+		opts.metricLabels[key] = value
 	})
 }
 

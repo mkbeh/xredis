@@ -2,6 +2,7 @@ package xredis
 
 import (
 	redisotelnative "github.com/redis/go-redis/extra/redisotel-native/v9"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -13,39 +14,39 @@ type RedisHistogramAggregation = redisotelnative.HistogramAggregation
 
 const (
 	// RedisMetricGroupCommand enables Redis command metrics.
-	RedisMetricGroupCommand RedisMetricGroupFlags = redisotelnative.MetricGroupFlagCommand
+	RedisMetricGroupCommand = redisotelnative.MetricGroupFlagCommand
 
 	// RedisMetricGroupConnectionBasic enables basic connection metrics.
-	RedisMetricGroupConnectionBasic RedisMetricGroupFlags = redisotelnative.MetricGroupFlagConnectionBasic
+	RedisMetricGroupConnectionBasic = redisotelnative.MetricGroupFlagConnectionBasic
 
 	// RedisMetricGroupResiliency enables Redis resiliency metrics.
-	RedisMetricGroupResiliency RedisMetricGroupFlags = redisotelnative.MetricGroupFlagResiliency
+	RedisMetricGroupResiliency = redisotelnative.MetricGroupFlagResiliency
 
 	// RedisMetricGroupConnectionAdvanced enables advanced connection metrics.
-	RedisMetricGroupConnectionAdvanced RedisMetricGroupFlags = redisotelnative.MetricGroupFlagConnectionAdvanced
+	RedisMetricGroupConnectionAdvanced = redisotelnative.MetricGroupFlagConnectionAdvanced
 
 	// RedisMetricGroupPubSub enables Redis Pub/Sub metrics.
-	RedisMetricGroupPubSub RedisMetricGroupFlags = redisotelnative.MetricGroupFlagPubSub
+	RedisMetricGroupPubSub = redisotelnative.MetricGroupFlagPubSub
 
 	// RedisMetricGroupStream enables Redis Stream metrics.
-	RedisMetricGroupStream RedisMetricGroupFlags = redisotelnative.MetricGroupFlagStream
+	RedisMetricGroupStream = redisotelnative.MetricGroupFlagStream
 
 	// RedisMetricGroupDefault enables production-safe default Redis client metrics.
-	RedisMetricGroupDefault RedisMetricGroupFlags = RedisMetricGroupCommand |
+	RedisMetricGroupDefault = RedisMetricGroupCommand |
 		RedisMetricGroupConnectionBasic |
 		RedisMetricGroupResiliency |
 		RedisMetricGroupConnectionAdvanced
 
 	// RedisMetricGroupAll enables all Redis client metric groups.
-	RedisMetricGroupAll RedisMetricGroupFlags = redisotelnative.MetricGroupAll
+	RedisMetricGroupAll = redisotelnative.MetricGroupAll
 )
 
 const (
 	// RedisHistogramAggregationExplicitBucket uses explicit bucket histograms.
-	RedisHistogramAggregationExplicitBucket RedisHistogramAggregation = redisotelnative.HistogramAggregationExplicitBucket
+	RedisHistogramAggregationExplicitBucket = redisotelnative.HistogramAggregationExplicitBucket
 
 	// RedisHistogramAggregationBase2Exponential uses base-2 exponential bucket histograms.
-	RedisHistogramAggregationBase2Exponential RedisHistogramAggregation = redisotelnative.HistogramAggregationBase2Exponential
+	RedisHistogramAggregationBase2Exponential = redisotelnative.HistogramAggregationBase2Exponential
 )
 
 // ObservabilityOption configures Redis client metrics instrumentation.
@@ -88,44 +89,41 @@ func InitObservability(opts ...ObservabilityOption) (func() error, error) {
 		return noopObservabilityShutdown, nil
 	}
 
-	nativeCfg := redisotelnative.NewConfig().
-		WithEnabled(true).
-		WithMetricGroups(cfg.metricGroups).
-		WithHidePubSubChannelNames(cfg.hidePubSubChannelNames).
-		WithHideStreamNames(cfg.hideStreamNames)
-
-	if cfg.meterProvider != nil {
-		nativeCfg.WithMeterProvider(cfg.meterProvider)
-	}
-	if len(cfg.includeCommands) > 0 {
-		nativeCfg.WithIncludeCommands(cfg.includeCommands)
-	}
-	if len(cfg.excludeCommands) > 0 {
-		nativeCfg.WithExcludeCommands(cfg.excludeCommands)
-	}
-	if cfg.histogramAggregationSet {
-		nativeCfg.WithHistogramAggregation(cfg.histogramAggregation)
-	}
-	if len(cfg.histogramBuckets) > 0 {
-		nativeCfg.WithHistogramBuckets(cfg.histogramBuckets)
+	provider := cfg.meterProvider
+	if provider == nil {
+		provider = otel.GetMeterProvider()
 	}
 
-	instance := redisotelnative.GetObservabilityInstance()
-	if err := instance.Init(nativeCfg); err != nil {
+	wrapperMetrics, err := newMetrics(provider)
+	if err != nil {
 		return nil, err
 	}
 
-	return instance.Shutdown, nil
+	shutdownRedis, err := initRedisMetrics(provider, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	setMetrics(wrapperMetrics)
+
+	return func() error {
+		clearMetrics(wrapperMetrics)
+
+		return shutdownRedis()
+	}, nil
 }
 
-// WithRedisMetricsEnabled enables or disables Redis client metrics.
-func WithRedisMetricsEnabled(enabled bool) ObservabilityOption {
+// WithMetricsEnabled enables or disables all Redis metrics.
+//
+// This includes native go-redis metrics and xredis wrapper-level metrics.
+func WithMetricsEnabled(enabled bool) ObservabilityOption {
 	return observabilityOptionFunc(func(cfg *observabilityConfig) {
 		cfg.enabled = enabled
 	})
 }
 
-// WithMeterProvider configures OpenTelemetry meter provider for Redis client metrics.
+// WithMeterProvider configures the OpenTelemetry meter provider used by native
+// go-redis and wrapper-level metrics.
 func WithMeterProvider(provider metric.MeterProvider) ObservabilityOption {
 	return observabilityOptionFunc(func(cfg *observabilityConfig) {
 		if provider != nil {
@@ -182,6 +180,41 @@ func WithRedisMetricHistogramBuckets(buckets ...float64) ObservabilityOption {
 	return observabilityOptionFunc(func(cfg *observabilityConfig) {
 		cfg.histogramBuckets = append([]float64(nil), buckets...)
 	})
+}
+
+func initRedisMetrics(
+	provider metric.MeterProvider,
+	cfg *observabilityConfig,
+) (func() error, error) {
+	nativeCfg := redisotelnative.NewConfig().
+		WithEnabled(true).
+		WithMeterProvider(provider).
+		WithMetricGroups(cfg.metricGroups).
+		WithHidePubSubChannelNames(cfg.hidePubSubChannelNames).
+		WithHideStreamNames(cfg.hideStreamNames)
+
+	if len(cfg.includeCommands) > 0 {
+		nativeCfg.WithIncludeCommands(cfg.includeCommands)
+	}
+
+	if len(cfg.excludeCommands) > 0 {
+		nativeCfg.WithExcludeCommands(cfg.excludeCommands)
+	}
+
+	if cfg.histogramAggregationSet {
+		nativeCfg.WithHistogramAggregation(cfg.histogramAggregation)
+	}
+
+	if len(cfg.histogramBuckets) > 0 {
+		nativeCfg.WithHistogramBuckets(cfg.histogramBuckets)
+	}
+
+	instance := redisotelnative.GetObservabilityInstance()
+	if err := instance.Init(nativeCfg); err != nil {
+		return nil, err
+	}
+
+	return instance.Shutdown, nil
 }
 
 func defaultObservabilityConfig() *observabilityConfig {

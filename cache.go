@@ -220,18 +220,36 @@ func WithCacheNegativeMarker(marker []byte) CacheOption {
 
 // Get reads a typed value from cache.
 func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
+	metricResult := cacheResultError
+
+	defer func() {
+		c.client.metrics.recordCacheRequest(
+			ctx,
+			cacheOperationGet,
+			metricResult,
+		)
+	}()
+
 	value, state, err := c.get(ctx, key)
 	if err != nil {
 		var zero T
 		return zero, false, err
 	}
 
-	if state != cacheHit {
+	metricResult = cacheResultFromState(state)
+
+	switch state {
+	case cacheHit:
+		return value, true, nil
+
+	case cacheMiss, cacheNegative:
 		var zero T
 		return zero, false, nil
-	}
 
-	return value, true, nil
+	default:
+		var zero T
+		return zero, false, ErrInvalidCacheEntry
+	}
 }
 
 // GetOrLoad reads a value from cache or loads it using loader.
@@ -248,6 +266,16 @@ func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) (T, error) {
 	var zero T
 
+	metricResult := cacheResultError
+
+	defer func() {
+		c.client.metrics.recordCacheRequest(
+			ctx,
+			cacheOperationGetOrLoad,
+			metricResult,
+		)
+	}()
+
 	if loader == nil {
 		return zero, ErrInvalidCacheLoader
 	}
@@ -257,12 +285,21 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 		return zero, err
 	}
 
+	metricResult = cacheResultFromState(state)
+
 	switch state {
 	case cacheHit:
 		return value, nil
+
 	case cacheNegative:
 		return zero, ErrKeyNotFound
-	case cacheMiss: // proceed to singleflight loading
+
+	case cacheMiss:
+		// proceed to singleflight loading
+
+	default:
+		metricResult = cacheResultError
+		return zero, ErrInvalidCacheEntry
 	}
 
 	ch := c.group.DoChan(c.key(key), func() (any, error) {
@@ -274,6 +311,10 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 		return zero, ctx.Err()
 
 	case result := <-ch:
+		if result.Shared {
+			c.client.metrics.recordCacheSingleflightShared(ctx)
+		}
+
 		if result.Err != nil {
 			return zero, result.Err
 		}
@@ -307,35 +348,6 @@ func (c *Cache[T]) Forget(key string) {
 	c.group.Forget(c.key(key))
 }
 
-func (c *Cache[T]) load(
-	ctx context.Context,
-	key string,
-	loader Loader[T],
-) (T, error) {
-	value, err := loader(ctx)
-	if err == nil {
-		if setErr := c.Set(ctx, key, value); setErr != nil {
-			return value, setErr
-		}
-
-		return value, nil
-	}
-
-	if !c.isNotFound(err) {
-		return value, err
-	}
-
-	notFoundErr := normalizeCacheNotFound(err)
-
-	if c.negativeTTL > 0 {
-		if setErr := c.setNegative(ctx, key); setErr != nil {
-			return value, errors.Join(notFoundErr, setErr)
-		}
-	}
-
-	return value, notFoundErr
-}
-
 func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 	var zero T
 
@@ -359,6 +371,63 @@ func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 	}
 
 	return value, cacheHit, nil
+}
+
+func (c *Cache[T]) load(
+	ctx context.Context,
+	key string,
+	loader Loader[T],
+) (T, error) {
+	value, err := c.runLoader(ctx, loader)
+	if err == nil {
+		if setErr := c.Set(ctx, key, value); setErr != nil {
+			return value, setErr
+		}
+
+		return value, nil
+	}
+
+	if !c.isNotFound(err) {
+		return value, err
+	}
+
+	notFoundErr := normalizeCacheNotFound(err)
+
+	if c.negativeTTL > 0 {
+		if setErr := c.setNegative(ctx, key); setErr != nil {
+			return value, errors.Join(notFoundErr, setErr)
+		}
+	}
+
+	return value, notFoundErr
+}
+
+func (c *Cache[T]) runLoader(
+	ctx context.Context,
+	loader Loader[T],
+) (T, error) {
+	start := time.Now()
+	outcome := loaderOutcomeError
+
+	defer func() {
+		c.client.metrics.recordCacheLoaderDuration(
+			ctx,
+			outcome,
+			time.Since(start),
+		)
+	}()
+
+	value, err := loader(ctx)
+
+	switch {
+	case err == nil:
+		outcome = loaderOutcomeSuccess
+
+	case c.isNotFound(err):
+		outcome = loaderOutcomeNotFound
+	}
+
+	return value, err
 }
 
 func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
@@ -489,4 +558,17 @@ func decodeCacheValue[T any](codec Codec, data []byte) (T, error) {
 	return decodeCacheInto[T](func(dst any) error {
 		return codec.Unmarshal(data, dst)
 	})
+}
+
+func cacheResultFromState(state cacheState) string {
+	switch state {
+	case cacheHit:
+		return cacheResultHit
+	case cacheMiss:
+		return cacheResultMiss
+	case cacheNegative:
+		return cacheResultNegativeHit
+	default:
+		return cacheResultError
+	}
 }
