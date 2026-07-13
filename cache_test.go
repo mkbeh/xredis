@@ -318,7 +318,7 @@ var _ = Describe("Cache", func() {
 	})
 
 	Describe("entry markers", func() {
-		It("treats values longer than the negative marker as regular values", func() {
+		It("treats values longer than the default negative marker as regular values", func() {
 			cache, err := xredis.NewCache[[]byte](
 				client,
 				xredis.WithCachePrefix("cache:marker:"),
@@ -333,6 +333,122 @@ var _ = Describe("Cache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeTrue())
 			Expect(value).To(Equal(expected))
+		})
+
+		It("uses a custom negative marker", func() {
+			const prefix = "cache:custom-marker:"
+
+			marker := []byte{0x00, 0xff}
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix(prefix),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeTTL(time.Minute),
+				xredis.WithCacheNegativeMarker(marker),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			var loads atomic.Int64
+
+			loader := func(context.Context) (cacheUser, error) {
+				loads.Add(1)
+
+				return cacheUser{}, xredis.ErrKeyNotFound
+			}
+
+			_, err = cache.GetOrLoad(ctx, "404", loader)
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
+
+			raw, err := client.Raw().Get(ctx, prefix+"404").Bytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(raw).To(Equal(marker))
+
+			_, err = cache.GetOrLoad(ctx, "404", loader)
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
+			Expect(loads.Load()).To(Equal(int64(1)))
+
+			value, ok, err := cache.Get(ctx, "404")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+			Expect(value).To(Equal(cacheUser{}))
+		})
+
+		It("treats the default marker as a regular value when a custom marker is configured", func() {
+			cache, err := xredis.NewCache[[]byte](
+				client,
+				xredis.WithCachePrefix("cache:custom-marker-default-value:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeMarker([]byte{0x00, 0xff}),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := []byte{0}
+			Expect(cache.Set(ctx, "value", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "value")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+		})
+
+		It("treats values containing the custom marker as regular values", func() {
+			marker := []byte{0x00, 0xff}
+			cache, err := xredis.NewCache[[]byte](
+				client,
+				xredis.WithCachePrefix("cache:custom-marker-prefix:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeMarker(marker),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := []byte{0x00, 0xff, 0x01}
+			Expect(cache.Set(ctx, "value", expected)).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "value")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(value).To(Equal(expected))
+		})
+
+		It("copies the configured negative marker", func() {
+			const prefix = "cache:custom-marker-copy:"
+
+			marker := []byte{0x00, 0xff}
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix(prefix),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeTTL(time.Minute),
+				xredis.WithCacheNegativeMarker(marker),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			marker[0] = 0x01
+
+			_, err = cache.GetOrLoad(
+				ctx,
+				"404",
+				func(context.Context) (cacheUser, error) {
+					return cacheUser{}, xredis.ErrKeyNotFound
+				},
+			)
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
+
+			raw, err := client.Raw().Get(ctx, prefix+"404").Bytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(raw).To(Equal([]byte{0x00, 0xff}))
+		})
+
+		It("rejects an empty negative marker", func() {
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:empty-marker:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeMarker(nil),
+			)
+
+			Expect(cache).To(BeNil())
+			Expect(errors.Is(err, xredis.ErrInvalidCacheMarker)).To(BeTrue())
 		})
 	})
 

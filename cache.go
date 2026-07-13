@@ -1,6 +1,7 @@
 package xredis
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 // Regular cache values are stored without a marker so they can be read through
 // the regular Redis client. The exact value []byte{cacheNegativeMarker} is
 // reserved and must not be used as a regular cache value.
-const cacheNegativeMarker byte = 0
+const defaultCacheNegativeMarker byte = 0
 
 // cacheState represents the status of a cache entry read from Redis.
 type cacheState uint8
@@ -53,10 +54,11 @@ type Loader[T any] func(ctx context.Context) (T, error)
 type Cache[T any] struct {
 	client *Client
 
-	prefix      string
-	ttl         time.Duration
-	jitter      time.Duration
-	negativeTTL time.Duration
+	prefix         string
+	ttl            time.Duration
+	jitter         time.Duration
+	negativeTTL    time.Duration
+	negativeMarker []byte
 
 	codec        Codec
 	redisEncoded bool
@@ -69,10 +71,11 @@ type Cache[T any] struct {
 type CacheOption func(*cacheOptions)
 
 type cacheOptions struct {
-	prefix      string
-	ttl         time.Duration
-	jitter      time.Duration
-	negativeTTL time.Duration
+	prefix         string
+	ttl            time.Duration
+	jitter         time.Duration
+	negativeTTL    time.Duration
+	negativeMarker []byte
 
 	codec      Codec
 	isNotFound func(error) bool
@@ -85,8 +88,9 @@ func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
 	}
 
 	options := cacheOptions{
-		codec:      JSONCodec{},
-		isNotFound: defaultCacheIsNotFound,
+		codec:          JSONCodec{},
+		isNotFound:     defaultCacheIsNotFound,
+		negativeMarker: []byte{defaultCacheNegativeMarker},
 	}
 
 	if client != nil && client.codec != nil {
@@ -104,14 +108,15 @@ func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
 	}
 
 	return &Cache[T]{
-		client:       client,
-		prefix:       options.prefix,
-		ttl:          options.ttl,
-		jitter:       options.jitter,
-		negativeTTL:  options.negativeTTL,
-		codec:        options.codec,
-		redisEncoded: isRedisEncoded[T](),
-		isNotFound:   options.isNotFound,
+		client:         client,
+		prefix:         options.prefix,
+		ttl:            options.ttl,
+		jitter:         options.jitter,
+		negativeTTL:    options.negativeTTL,
+		negativeMarker: options.negativeMarker,
+		codec:          options.codec,
+		redisEncoded:   isRedisEncoded[T](),
+		isNotFound:     options.isNotFound,
 	}, nil
 }
 
@@ -131,6 +136,10 @@ func validateCacheOptions(client *Client, opts cacheOptions) error {
 
 	if opts.ttl < 0 || opts.jitter < 0 || opts.negativeTTL < 0 {
 		return ErrInvalidTTL
+	}
+
+	if len(opts.negativeMarker) == 0 {
+		return ErrInvalidCacheMarker
 	}
 
 	return nil
@@ -189,6 +198,23 @@ func WithCacheNotFound(fn func(error) bool) CacheOption {
 		if fn != nil {
 			opts.isNotFound = fn
 		}
+	}
+}
+
+// WithCacheNegativeMarker configures the value used to represent cached
+// not-found results.
+//
+// The marker must not be empty. Its exact byte sequence is reserved and must
+// not be stored as a regular cache value. The default marker is []byte{0}.
+//
+// Cache instances sharing the same keyspace must use the same negative marker.
+// When changing the marker, delete existing negative entries or use a new
+// cache prefix.
+func WithCacheNegativeMarker(marker []byte) CacheOption {
+	marker = bytes.Clone(marker)
+
+	return func(opts *cacheOptions) {
+		opts.negativeMarker = marker
 	}
 }
 
@@ -323,7 +349,7 @@ func (c *Cache[T]) get(ctx context.Context, key string) (T, cacheState, error) {
 		return zero, cacheMiss, err
 	}
 
-	if len(data) == 1 && data[0] == cacheNegativeMarker {
+	if bytes.Equal(data, c.negativeMarker) {
 		return zero, cacheNegative, nil
 	}
 
@@ -343,7 +369,7 @@ func (c *Cache[T]) setNegative(ctx context.Context, key string) error {
 	return c.client.conn.Set(
 		ctx,
 		c.key(key),
-		[]byte{cacheNegativeMarker},
+		c.negativeMarker,
 		c.expiration(c.negativeTTL),
 	).Err()
 }

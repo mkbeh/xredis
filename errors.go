@@ -24,6 +24,9 @@ var (
 	// ErrInvalidCacheLoader is returned when a cache loader is nil or invalid.
 	ErrInvalidCacheLoader = errors.New("invalid cache loader")
 
+	// ErrInvalidCacheMarker is returned when a cache negative marker is invalid.
+	ErrInvalidCacheMarker = errors.New("invalid cache negative marker")
+
 	// ErrLockNotOwned is returned when a lock is expired, deleted, or owned by another token.
 	ErrLockNotOwned = errors.New("lock not owned")
 
