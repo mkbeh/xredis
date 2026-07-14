@@ -17,8 +17,7 @@ import (
 // cacheNegativeMarker is the reserved value used for cached not-found results.
 //
 // Regular cache values are stored without a marker so they can be read through
-// the regular Redis client. The exact value []byte{cacheNegativeMarker} is
-// reserved and must not be used as a regular cache value.
+// the regular Redis client.
 const defaultCacheNegativeMarker byte = 0
 
 // cacheState represents the status of a cache entry read from Redis.
@@ -248,7 +247,7 @@ func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	default:
 		var zero T
-		return zero, false, ErrInvalidCacheEntry
+		return zero, false, ErrInvalidEntry
 	}
 }
 
@@ -299,7 +298,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 
 	default:
 		metricResult = cacheResultError
-		return zero, ErrInvalidCacheEntry
+		return zero, ErrInvalidEntry
 	}
 
 	ch := c.group.DoChan(c.key(key), func() (any, error) {
@@ -321,7 +320,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 
 		loaded, ok := result.Val.(T)
 		if !ok {
-			return zero, ErrInvalidCacheEntry
+			return zero, ErrInvalidEntry
 		}
 
 		return loaded, nil
@@ -378,28 +377,32 @@ func (c *Cache[T]) load(
 	key string,
 	loader Loader[T],
 ) (T, error) {
+	var zero T
+
 	value, err := c.runLoader(ctx, loader)
 	if err == nil {
 		if setErr := c.Set(ctx, key, value); setErr != nil {
-			return value, setErr
+			return zero, fmt.Errorf("store cache value: %w", setErr)
 		}
 
 		return value, nil
 	}
 
 	if !c.isNotFound(err) {
-		return value, err
+		return zero, fmt.Errorf("%w: %w", ErrCacheLoad, err)
 	}
 
 	notFoundErr := normalizeCacheNotFound(err)
 
-	if c.negativeTTL > 0 {
-		if setErr := c.setNegative(ctx, key); setErr != nil {
-			return value, errors.Join(notFoundErr, setErr)
-		}
+	if c.negativeTTL <= 0 {
+		return zero, notFoundErr
 	}
 
-	return value, notFoundErr
+	if setErr := c.setNegative(ctx, key); setErr != nil {
+		return zero, fmt.Errorf("store negative cache entry: %w", setErr)
+	}
+
+	return zero, notFoundErr
 }
 
 func (c *Cache[T]) runLoader(
@@ -511,51 +514,12 @@ func isRedisEncoded[T any]() bool {
 	}
 }
 
-func decodeCacheInto[T any](decode func(dst any) error) (T, error) {
-	var zero T
-
-	typ := reflect.TypeFor[T]()
-
-	if typ.Kind() != reflect.Pointer {
-		var value T
-
-		if err := decode(&value); err != nil {
-			return zero, err
-		}
-
-		return value, nil
-	}
-
-	value := reflect.New(typ.Elem())
-
-	if err := decode(value.Interface()); err != nil {
-		return zero, err
-	}
-
-	// reflect.New returns PointerTo(typ.Elem()), which may differ
-	// from T when T is a defined pointer type.
-	if value.Type() != typ {
-		if !value.CanConvert(typ) {
-			return zero, ErrInvalidCacheEntry
-		}
-
-		value = value.Convert(typ)
-	}
-
-	decoded, ok := value.Interface().(T)
-	if !ok {
-		return zero, ErrInvalidCacheEntry
-	}
-
-	return decoded, nil
-}
-
 func scanCacheValue[T any](cmd *rdb.StringCmd) (T, error) {
-	return decodeCacheInto[T](cmd.Scan)
+	return decodeInto[T](cmd.Scan)
 }
 
 func decodeCacheValue[T any](codec Codec, data []byte) (T, error) {
-	return decodeCacheInto[T](func(dst any) error {
+	return decodeInto[T](func(dst any) error {
 		return codec.Unmarshal(data, dst)
 	})
 }

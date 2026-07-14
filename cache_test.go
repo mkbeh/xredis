@@ -259,32 +259,6 @@ var _ = Describe("Cache", func() {
 	})
 
 	Describe("not-found handling", func() {
-		It("normalizes a custom not-found error", func() {
-			errUserNotFound := errors.New("user not found")
-
-			cache, err := xredis.NewCache[cacheUser](
-				client,
-				xredis.WithCachePrefix("cache:custom-not-found:"),
-				xredis.WithCacheTTL(time.Minute),
-				xredis.WithCacheNegativeTTL(time.Minute),
-				xredis.WithCacheNotFound(func(err error) bool {
-					return errors.Is(err, errUserNotFound)
-				}),
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			_, err = cache.GetOrLoad(
-				ctx,
-				"404",
-				func(context.Context) (cacheUser, error) {
-					return cacheUser{}, errUserNotFound
-				},
-			)
-
-			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
-			Expect(errors.Is(err, errUserNotFound)).To(BeTrue())
-		})
-
 		It("caches not-found results and skips repeated loader calls", func() {
 			cache, err := xredis.NewCache[cacheUser](
 				client,
@@ -314,6 +288,34 @@ var _ = Describe("Cache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeFalse())
 			Expect(value).To(Equal(cacheUser{}))
+		})
+
+		It("normalizes a custom not-found error without classifying it as a loader failure", func() {
+			errUserNotFound := errors.New("user not found")
+
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:custom-not-found:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeTTL(time.Minute),
+				xredis.WithCacheNotFound(func(err error) bool {
+					return errors.Is(err, errUserNotFound)
+				}),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = cache.GetOrLoad(
+				ctx,
+				"404",
+				func(context.Context) (cacheUser, error) {
+					return cacheUser{}, errUserNotFound
+				},
+			)
+
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
+			Expect(errors.Is(err, errUserNotFound)).To(BeTrue())
+			Expect(errors.Is(err, xredis.ErrCacheLoad)).To(BeFalse())
 		})
 	})
 
@@ -491,6 +493,123 @@ var _ = Describe("Cache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeFalse())
 			Expect(value).To(BeEmpty())
+		})
+	})
+
+	Describe("loader errors", func() {
+		It("classifies loader failures and preserves the original error", func() {
+			errLoader := errors.New("database unavailable")
+
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:loader-error:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			value, err := cache.GetOrLoad(
+				ctx,
+				"42",
+				func(context.Context) (cacheUser, error) {
+					return cacheUser{}, errLoader
+				},
+			)
+
+			Expect(value).To(Equal(cacheUser{}))
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, xredis.ErrCacheLoad)).To(BeTrue())
+			Expect(errors.Is(err, errLoader)).To(BeTrue())
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeFalse())
+		})
+
+		It("does not classify not-found results as loader failures", func() {
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:loader-not-found:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			value, err := cache.GetOrLoad(
+				ctx,
+				"404",
+				func(context.Context) (cacheUser, error) {
+					return cacheUser{}, xredis.ErrKeyNotFound
+				},
+			)
+
+			Expect(value).To(Equal(cacheUser{}))
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeTrue())
+			Expect(errors.Is(err, xredis.ErrCacheLoad)).To(BeFalse())
+		})
+	})
+
+	Describe("strict writes", func() {
+		It("returns a cache write error after a successful loader", func() {
+			failingClient := newTestClient()
+			DeferCleanup(func() {
+				_ = failingClient.Close()
+			})
+
+			cache, err := xredis.NewCache[cacheUser](
+				failingClient,
+				xredis.WithCachePrefix("cache:value-write-error:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := cacheUser{
+				ID:   "42",
+				Name: "Ada",
+			}
+
+			value, err := cache.GetOrLoad(
+				ctx,
+				"42",
+				func(context.Context) (cacheUser, error) {
+					_ = failingClient.Close()
+
+					return expected, nil
+				},
+			)
+
+			Expect(value).To(Equal(cacheUser{}))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("store cache value"))
+			Expect(errors.Is(err, xredis.ErrCacheLoad)).To(BeFalse())
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeFalse())
+		})
+
+		It("returns a cache write error when storing a negative entry fails", func() {
+			failingClient := newTestClient()
+			DeferCleanup(func() {
+				_ = failingClient.Close()
+			})
+
+			cache, err := xredis.NewCache[cacheUser](
+				failingClient,
+				xredis.WithCachePrefix("cache:negative-write-error:"),
+				xredis.WithCacheTTL(time.Minute),
+				xredis.WithCacheNegativeTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			value, err := cache.GetOrLoad(
+				ctx,
+				"404",
+				func(context.Context) (cacheUser, error) {
+					_ = failingClient.Close()
+
+					return cacheUser{}, xredis.ErrKeyNotFound
+				},
+			)
+
+			Expect(value).To(Equal(cacheUser{}))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("store negative cache entry"))
+			Expect(errors.Is(err, xredis.ErrKeyNotFound)).To(BeFalse())
+			Expect(errors.Is(err, xredis.ErrCacheLoad)).To(BeFalse())
 		})
 	})
 })

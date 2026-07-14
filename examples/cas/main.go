@@ -79,7 +79,7 @@ func seedStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"key":    key,
 		"status": "processing",
 	})
@@ -89,7 +89,13 @@ func completeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := statusKey(id)
 
-	swapped, err := client.CompareAndSwap(r.Context(), key, "processing", "completed", valueTTL)
+	swapped, err := client.CompareAndSwap(
+		r.Context(),
+		key,
+		"processing",
+		"completed",
+		xredis.KeepTTL,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -111,7 +117,11 @@ func deleteProcessingStatusHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := statusKey(id)
 
-	deleted, err := client.CompareAndDelete(r.Context(), key, "processing")
+	deleted, err := client.CompareAndDelete(
+		r.Context(),
+		key,
+		"processing",
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -132,18 +142,35 @@ func staleStatusHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := statusKey(id)
 
-	if err := client.Set(r.Context(), key, "processing", valueTTL); err != nil {
+	if err := client.Set(
+		r.Context(),
+		key,
+		"processing",
+		valueTTL,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	firstSwapped, err := client.CompareAndSwap(r.Context(), key, "processing", "cancelled", valueTTL)
+	firstSwapped, err := client.CompareAndSwap(
+		r.Context(),
+		key,
+		"processing",
+		"cancelled",
+		xredis.KeepTTL,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	staleSwapped, err := client.CompareAndSwap(r.Context(), key, "processing", "completed", valueTTL)
+	staleSwapped, err := client.CompareAndSwap(
+		r.Context(),
+		key,
+		"processing",
+		"completed",
+		xredis.KeepTTL,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -166,7 +193,7 @@ func staleStatusHandler(w http.ResponseWriter, r *http.Request) {
 func getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	order, ok, err := repo.Get(r.Context(), id)
+	entry, ok, err := repo.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -178,30 +205,38 @@ func getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":   orderKey(id),
-		"order": order,
+		"key":      orderKey(id),
+		"order":    entry.Value,
+		"revision": entry.Revision,
 	})
 }
 
 func seedOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	order, err := repo.Seed(r.Context(), id)
+	entry, created, err := repo.Seed(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"key":   orderKey(id),
-		"order": order,
+	if !created {
+		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"key":      orderKey(id),
+		"created":  true,
+		"order":    entry.Value,
+		"revision": entry.Revision,
 	})
 }
 
 func completeOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	order, swapped, err := repo.Complete(r.Context(), id)
+	entry, swapped, err := repo.Complete(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -213,16 +248,17 @@ func completeOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":     orderKey(id),
-		"swapped": true,
-		"order":   order,
+		"key":      orderKey(id),
+		"swapped":  true,
+		"order":    entry.Value,
+		"revision": entry.Revision,
 	})
 }
 
 func deleteCurrentOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	expected, deleted, err := repo.DeleteIfCurrent(r.Context(), id)
+	entry, deleted, err := repo.DeleteIfCurrent(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -234,9 +270,10 @@ func deleteCurrentOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":            orderKey(id),
-		"deleted":        true,
-		"expected_order": expected,
+		"key":               orderKey(id),
+		"deleted":           true,
+		"expected_order":    entry.Value,
+		"expected_revision": entry.Revision,
 	})
 }
 
@@ -255,7 +292,11 @@ func staleOrderHandler(w http.ResponseWriter, r *http.Request) {
 func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	keys := make([]string, 0, len(sampleIDs)*2)
 	for _, id := range sampleIDs {
-		keys = append(keys, statusKey(id), orderKey(id))
+		keys = append(
+			keys,
+			statusKey(id),
+			orderKey(id),
+		)
 	}
 
 	if err := client.DeleteMany(r.Context(), keys); err != nil {
@@ -291,19 +332,28 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	repo = newOrderRepository(client, valueTTL)
+	repo, err = newOrderRepository(client, valueTTL)
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("GET /statuses/{id}", getStatusHandler)
 	mux.HandleFunc("POST /statuses/{id}/seed", seedStatusHandler)
 	mux.HandleFunc("POST /statuses/{id}/complete", completeStatusHandler)
-	mux.HandleFunc("DELETE /statuses/{id}/processing", deleteProcessingStatusHandler)
+	mux.HandleFunc(
+		"DELETE /statuses/{id}/processing",
+		deleteProcessingStatusHandler,
+	)
 	mux.HandleFunc("POST /statuses/{id}/stale", staleStatusHandler)
 	mux.HandleFunc("GET /orders/{id}", getOrderHandler)
 	mux.HandleFunc("POST /orders/{id}/seed", seedOrderHandler)
 	mux.HandleFunc("POST /orders/{id}/complete", completeOrderHandler)
-	mux.HandleFunc("DELETE /orders/{id}/current", deleteCurrentOrderHandler)
+	mux.HandleFunc(
+		"DELETE /orders/{id}/current",
+		deleteCurrentOrderHandler,
+	)
 	mux.HandleFunc("POST /orders/{id}/stale", staleOrderHandler)
 	mux.HandleFunc("DELETE /sample", cleanupHandler)
 

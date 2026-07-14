@@ -39,6 +39,12 @@ tasks:
       - task: vendor-root
       - task: test-root
 
+  bench-cache-all:
+    desc: "Run all cache value decoding benchmarks"
+    cmds:
+      - task: bench-cache
+      - task: bench-cache-parallel
+
   bench-cache:
     desc: "Benchmark cache value decoding"
     env:
@@ -65,12 +71,6 @@ tasks:
           -count=5 \
           -cpu=1,4,8,20 \
           > parallel.txt
-
-  bench-cache-all:
-    desc: "Run all cache value decoding benchmarks"
-    cmds:
-      - task: bench-cache
-      - task: bench-cache-parallel
 
   tidy-examples:
     desc: "Tidy example module dependencies"
@@ -139,6 +139,19 @@ tasks:
     cmds:
       - go test -mod=vendor -race -v -count=1 ./...
 
+  coverage:
+    desc: Run tests and print total coverage
+    cmds:
+      - go test -tags=integration -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out | grep total
+
+  coverage:html:
+    desc: Generate HTML coverage report
+    deps:
+      - coverage
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
+
   _run-linter:
     desc: "Run golangci-lint in Docker"
     cmds:
@@ -155,16 +168,3 @@ tasks:
         -w {{.WORK_DIR}}
         golangci/golangci-lint:{{.LINTER_VER}}
         golangci-lint run --timeout 5m --fix --modules-download-mode vendor
-
-  coverage:
-    desc: Run tests and print total coverage
-    cmds:
-      - go test -tags=integration -count=1 -covermode=atomic -coverprofile=coverage.out ./...
-      - go tool cover -func=coverage.out | grep total
-
-  coverage:html:
-    desc: Generate HTML coverage report
-    deps:
-      - coverage
-    cmds:
-      - go tool cover -html=coverage.out -o coverage.html

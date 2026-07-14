@@ -114,7 +114,7 @@ its connection and routing settings.
 | **Standalone Redis**               | `NewClient`                | `ClientConfig`   |
 | **Redis Cluster**                  | `NewClusterClient`         | `ClusterConfig`  |
 | **Redis Sentinel / Failover**      | `NewFailoverClient`        | `FailoverConfig` |
-| **Sentinel-backed Cluster**        | `NewFailoverClusterClient` | `FailoverConfig` |
+| **Redis Sentinel with replica routing**        | `NewFailoverClusterClient` | `FailoverConfig` |
 | **Client-side sharding with Ring** | `NewRing`                  | `RingConfig`     |
 
 ### Configuration capabilities
@@ -230,8 +230,8 @@ client, err := xredis.NewClient(
 <!-- @formatter:on -->
 
 > [!NOTE]
-> Raw and codec-backed compare operations are intentionally separate. Values written with `SetStruct` must use the
-`*Struct` variants of compare-and-swap and compare-and-delete operations.
+> `SetStruct` and `GetStruct` store codec-backed Redis string values without revision metadata. For optimistic
+> concurrency on structured values, use `VersionedStore[T]`.
 
 ### Redis hashes
 
@@ -324,44 +324,186 @@ cache, err := xredis.NewCache[User](
 
 ## Atomic compare operations
 
-Compare-and-swap (CAS) and compare-and-delete (CAD) operations are executed atomically using server-side Lua scripts.
+`xredis` provides atomic compare-and-swap (CAS) and compare-and-delete (CAD) operations for raw Redis string values,
+individual hash fields, and structured values. The operations are executed atomically in Redis using server-side Lua
+scripts.
+
+### Raw values
+
+`CompareAndSwap` and `CompareAndDelete` compare the exact Redis string representation of a value before modifying or
+removing it:
 
 <!-- @formatter:off -->
 ```go
-// Update the status only if its current value is "processing".
+// Update the status only if it is still "processing".
 swapped, err := client.CompareAndSwap(
     ctx,
     "order:42:status",
     "processing",
     "completed",
-    time.Hour,
+    xredis.KeepTTL,
 )
 if err != nil {
     return err
 }
+if !swapped {
+    return errors.New("status changed concurrently")
+}
 
-if swapped {
-    // Delete the key only if its current value is "completed".
-    deleted, err := client.CompareAndDelete(
-        ctx,
-        "order:42:status",
-        "completed",
-    )
-    if err != nil {
-        return err
-    }
+// Delete the key only if its current value is "completed".
+deleted, err := client.CompareAndDelete(
+    ctx,
+    "order:42:status",
+    "completed",
+)
+if err != nil {
+    return err
+}
+if !deleted {
+    return errors.New("status changed before deletion")
+}
+```
+<!-- @formatter:on -->
 
-    if !deleted {
-        return errors.New("value changed before deletion")
-    }
+> [!NOTE]
+> Raw compare operations use the standard `go-redis` argument encoding and compare values byte-for-byte. The `expected`
+> value must use the same representation as the value originally stored in Redis.
+
+### Hash fields
+
+`HCompareAndSwap` and `HCompareAndDelete` atomically compare and modify an individual Redis hash field:
+
+<!-- @formatter:off -->
+```go
+swapped, err := client.HCompareAndSwap(
+    ctx,
+    "order:42",
+    "status",
+    "processing",
+    "completed",
+)
+if err != nil {
+    return err
+}
+if !swapped {
+    return errors.New("status changed concurrently")
+}
+```
+<!-- @formatter:on -->
+
+> [!NOTE]
+> Hash-field compare operations preserve the existing expiration of the hash key. If `HCompareAndDelete` removes the
+> last remaining field, Redis removes the hash key.
+
+### Versioned structured values
+
+`VersionedStore[T]` provides revision-based optimistic concurrency control for structured values. Instead of sending
+the previous encoded value back to Redis for comparison, update and delete operations validate a compact opaque
+revision. A successful update still transmits the new encoded value.
+
+#### Storage schema
+
+Each versioned object is stored as a single Redis hash:
+
+| Field | Representation | Description |
+| :--- | :--- | :--- |
+| `value` | Binary-safe string | Encoded representation of `T` |
+| `revision` | String | Opaque optimistic-concurrency token |
+
+#### Example
+
+The following example creates a versioned order, reads its current revision, updates it conditionally, and deletes it
+only if the revision still matches.
+
+<!-- @formatter:off -->
+```go
+// Initialize a typed versioned store.
+store, err := xredis.NewVersionedStore[Order](
+	client,
+	xredis.WithVersionedStorePrefix("versioned:order:"),
+)
+if err != nil {
+	return err
+}
+
+// Create the object only if the Redis key does not exist.
+revision, created, err := store.Create(
+	ctx,
+	"42",
+	Order{
+		ID:     "42",
+		Status: "processing",
+	},
+	time.Hour,
+)
+if err != nil {
+	return err
+}
+if !created {
+	return errors.New("order already exists")
+}
+
+fmt.Println("created revision:", revision)
+
+// Read the current value and revision.
+entry, ok, err := store.Get(ctx, "42")
+if err != nil {
+	return err
+}
+if !ok {
+	return xredis.ErrKeyNotFound
+}
+
+// Update the value locally.
+updated := entry.Value
+updated.Status = "completed"
+
+// Replace the value only if the revision remains unchanged.
+newRevision, swapped, err := store.CompareAndSwap(
+	ctx,
+	"42",
+	entry.Revision,
+	updated,
+	xredis.KeepTTL,
+)
+if err != nil {
+	return err
+}
+if !swapped {
+	return errors.New("order changed concurrently")
+}
+
+// Delete the object only if the revision still matches.
+deleted, err := store.CompareAndDelete(
+	ctx,
+	"42",
+	newRevision,
+)
+if err != nil {
+	return err
+}
+if !deleted {
+	return errors.New("order changed before deletion")
 }
 ```
 <!-- @formatter:on -->
 
 > [!IMPORTANT]
-> Values written through codec-backed helpers such as `SetStruct` must use `CompareAndSwapStruct` and
-`CompareAndDeleteStruct`. Raw and codec-backed compare operations use different value encodings and are intentionally
-> kept separate.
+> `VersionedStore[T]` uses a dedicated Redis hash representation. Keys managed by a versioned store must not be modified
+> through Redis string-value methods such as `Set` or `SetStruct`. Store instances sharing the same keyspace must use
+> the same value type and `Codec`.
+
+### Expiration management
+
+`Create` and `CompareAndSwap` manage the expiration of the versioned object as follows:
+
+| Value             | `Create`                     | `CompareAndSwap`                                             |
+| :---------------- | :--------------------------- | :----------------------------------------------------------- |
+| `xredis.KeepTTL`  | Returns `ErrInvalidTTL`      | Preserves the existing expiration                            |
+| `0`               | Creates a persistent key     | Removes the existing expiration and makes the key persistent |
+| Positive duration | Applies the given expiration | Replaces the existing expiration                             |
+
+For a complete runnable example, see [examples/cas](examples/cas).
 
 ## Distributed locks
 

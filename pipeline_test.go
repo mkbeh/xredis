@@ -188,7 +188,7 @@ var _ = Describe("Pipeline", func() {
 			Expect(ttl).To(Equal(time.Duration(-1)))
 		})
 
-		It("does not mix encoded values with raw comparisons", func() {
+		It("stores codec-backed values that do not match raw comparisons", func() {
 			Expect(client.SetStructMany(ctx, []xredis.SetItem{
 				{
 					Key:   "encoded:status",
@@ -196,25 +196,23 @@ var _ = Describe("Pipeline", func() {
 				},
 			})).To(Succeed())
 
-			rawDeleted, err := client.CompareAndDelete(
+			deleted, err := client.CompareAndDelete(
 				ctx,
 				"encoded:status",
 				"processing",
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(rawDeleted).To(BeFalse())
+			Expect(deleted).To(BeFalse())
 
-			exists, err := client.Exists(ctx, "encoded:status")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(exists).To(BeTrue())
-
-			encodedDeleted, err := client.CompareAndDeleteStruct(
+			var status string
+			ok, err := client.GetStruct(
 				ctx,
 				"encoded:status",
-				"processing",
+				&status,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(encodedDeleted).To(BeTrue())
+			Expect(ok).To(BeTrue())
+			Expect(status).To(Equal("processing"))
 		})
 
 		It("returns codec errors without executing queued commands", func() {
