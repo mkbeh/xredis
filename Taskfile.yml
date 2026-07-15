@@ -1,28 +1,170 @@
-version: 3
+version: "3"
 
 vars:
   LINTER_VER: "v2.12.2"
+  GOMODCACHE:
+    sh: go env GOMODCACHE
+  GOCACHE:
+    sh: go env GOCACHE
+  PWD_DIR:
+    sh: pwd
+
+env:
+  GOWORK: "off"
 
 tasks:
   run:
     desc: "Full cycle"
-    deps:
-      - lint
+    cmds:
+      - task: vendor-root
+      - task: lint-root
+      - task: test-root
+
+  before-commit:
+    desc: "Tidy example modules and run all checks"
+    cmds:
+      - task: tidy-examples
+      - task: check-examples
+      - task: run
 
   lint:
-    desc: "lint"
+    desc: "Lint root module"
     cmds:
-      - docker run --rm
+      - task: vendor-root
+      - task: lint-root
+
+  test:
+    desc: "Test root module"
+    cmds:
+      - task: vendor-root
+      - task: test-root
+
+  bench-cache-all:
+    desc: "Run all cache value decoding benchmarks"
+    cmds:
+      - task: bench-cache
+      - task: bench-cache-parallel
+
+  bench-cache:
+    desc: "Benchmark cache value decoding"
+    env:
+      GOMAXPROCS: "1"
+    cmds:
+      - |
+        go test -mod=vendor \
+          -run='^$' \
+          -bench='^BenchmarkDecodeCacheValue$' \
+          -benchmem \
+          -benchtime=1s \
+          -count=5 \
+          > bench.txt
+
+  bench-cache-parallel:
+    desc: "Benchmark parallel cache value decoding"
+    cmds:
+      - |
+        go test -mod=vendor \
+          -run='^$' \
+          -bench='^BenchmarkDecodeCacheValueParallel$' \
+          -benchmem \
+          -benchtime=1s \
+          -count=5 \
+          -cpu=1,4,8,20 \
+          > parallel.txt
+
+  tidy-examples:
+    desc: "Tidy example module dependencies"
+    cmds:
+      - |
+        set -euo pipefail
+
+        find ./examples -name go.mod -print |
+        sort |
+        while IFS= read -r mod; do
+          dir="$(dirname "$mod")"
+          echo "==> $dir"
+
+          (
+            cd "$dir"
+            GOWORK=off go mod tidy -v
+          )
+        done
+
+  check-examples:
+    desc: "Check example modules against the local checkout"
+    cmds:
+      - |
+        set -euo pipefail
+
+        root="$(pwd)"
+
+        find ./examples -name go.mod -print |
+        sort |
+        while IFS= read -r mod; do
+          dir="$(dirname "$mod")"
+          echo "==> $dir"
+
+          (
+            workspace="$(mktemp -d)"
+            trap 'rm -rf "$workspace"' EXIT
+
+            (
+              cd "$workspace"
+              GOWORK=off go work init "$root" "$root/${dir#./}"
+            )
+
+            cd "$dir"
+            GOWORK="$workspace/go.work" go mod verify
+            GOWORK="$workspace/go.work" go vet ./...
+            GOWORK="$workspace/go.work" go test -race -count=1 ./...
+          )
+        done
+
+  vendor-root:
+    desc: "Vendor root module"
+    cmds:
+      - rm -rf vendor
+      - go mod tidy -v
+      - go mod vendor
+
+  lint-root:
+    desc: "Lint root module"
+    cmds:
+      - task: _run-linter
+        vars:
+          WORK_DIR: /app
+
+  test-root:
+    desc: "Test root module"
+    cmds:
+      - go test -mod=vendor -race -v -count=1 ./...
+
+  coverage:
+    desc: Run tests and print total coverage
+    cmds:
+      - go test -tags=integration -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out | grep total
+
+  coverage:html:
+    desc: Generate HTML coverage report
+    deps:
+      - coverage
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
+
+  _run-linter:
+    desc: "Run golangci-lint in Docker"
+    cmds:
+      - >
+        docker run --rm
         -u $(id -u):$(id -g)
-        -v {{.PWD}}:/app
-        -v {{.GOCACHE_ENV}}:/go/pkg/mod
-        -e GOCACHE=/go/pkg/mod
-        -e GOLANGCI_LINT_CACHE=/go/pkg/mod
-        -w /app
+        -v {{.PWD_DIR}}:/app
+        -v {{.GOMODCACHE}}:/go/pkg/mod
+        -v {{.GOCACHE}}:/go/build-cache
+        -e GOMODCACHE=/go/pkg/mod
+        -e GOCACHE=/go/build-cache
+        -e GOLANGCI_LINT_CACHE=/go/build-cache/golangci-lint
+        -e GOWORK=off
+        -w {{.WORK_DIR}}
         golangci/golangci-lint:{{.LINTER_VER}}
         golangci-lint run --timeout 5m --fix --modules-download-mode vendor
-    vars:
-      GOCACHE_ENV:
-        sh: go env GOCACHE
-      PWD:
-        sh: pwd

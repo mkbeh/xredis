@@ -1,0 +1,212 @@
+package xredis
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+	rdb "github.com/redis/go-redis/v9"
+)
+
+// lockExtendScript atomically extends a lock only if the stored owner token
+// matches the caller token.
+//
+// KEYS[1] - lock key
+// ARGV[1] - owner token
+// ARGV[2] - lock TTL in milliseconds
+var lockExtendScript = rdb.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+
+return 0
+`)
+
+// Lock represents an acquired Redis lease lock.
+//
+// Lock is token-based: Unlock and Extend only succeed while Redis still stores
+// the same owner token.
+type Lock struct {
+	client *Client
+
+	key   string
+	token string
+}
+
+// Key returns the Redis lock key.
+func (l *Lock) Key() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.key
+}
+
+// Token returns the lock owner token.
+func (l *Lock) Token() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.token
+}
+
+// TryLock tries to acquire a Redis lock with ttl.
+//
+// It returns acquired=false when the lock already exists.
+func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*Lock, bool, error) {
+	return c.TryLockWithToken(ctx, key, uuid.NewString(), ttl)
+}
+
+// TryLockWithToken tries to acquire a Redis lock using the provided owner token.
+//
+// Token must be unique per lock attempt. Reusing tokens across independent lock
+// attempts may make ownership checks unsafe.
+func (c *Client) TryLockWithToken(ctx context.Context, key, token string, ttl time.Duration) (*Lock, bool, error) {
+	if c == nil {
+		return nil, false, ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		c.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationAcquire,
+			metricOutcome,
+		)
+	}()
+
+	if err := validateLock(c, key, token); err != nil {
+		return nil, false, err
+	}
+
+	if ttl <= 0 {
+		return nil, false, ErrInvalidTTL
+	}
+
+	acquired, err := c.conn.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !acquired {
+		metricOutcome = lockOutcomeContended
+		return nil, false, nil
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return &Lock{
+		client: c,
+		key:    key,
+		token:  token,
+	}, true, nil
+}
+
+// Unlock releases the lock if it is still owned by this Lock.
+//
+// It returns ErrLockNotOwned if the lock expired, was deleted, or is owned by
+// another token.
+func (l *Lock) Unlock(ctx context.Context) error {
+	if l == nil || l.client == nil {
+		return ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationUnlock,
+			metricOutcome,
+		)
+	}()
+
+	if err := l.validate(); err != nil {
+		return err
+	}
+
+	deleted, err := l.client.CompareAndDelete(ctx, l.key, l.token)
+	if err != nil {
+		return err
+	}
+
+	if !deleted {
+		metricOutcome = lockOutcomeNotOwned
+		return ErrLockNotOwned
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return nil
+}
+
+// Extend extends the lock TTL if it is still owned by this Lock.
+//
+// It returns false when the lock expired, was deleted, or is owned by another
+// token.
+func (l *Lock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
+	if l == nil || l.client == nil {
+		return false, ErrInvalidLock
+	}
+
+	metricOutcome := lockOutcomeError
+
+	defer func() {
+		l.client.metrics.recordLockOperation(
+			ctx,
+			lockTypeLease,
+			lockOperationExtend,
+			metricOutcome,
+		)
+	}()
+
+	if err := l.validate(); err != nil {
+		return false, err
+	}
+
+	if ttl <= 0 {
+		return false, ErrInvalidTTL
+	}
+
+	extended, err := lockExtendScript.Run(ctx, l.client.conn, []string{l.key}, l.token, durationToMs(ttl)).Int64()
+	if err != nil {
+		return false, err
+	}
+
+	if extended != 1 {
+		metricOutcome = lockOutcomeNotOwned
+
+		return false, nil
+	}
+
+	metricOutcome = lockOutcomeSuccess
+
+	return true, nil
+}
+
+func (l *Lock) validate() error {
+	if l == nil {
+		return ErrInvalidLock
+	}
+
+	return validateLock(
+		l.client,
+		l.key,
+		l.token,
+	)
+}
+
+func validateLock(client *Client, key, token string) error {
+	if client == nil ||
+		client.conn == nil ||
+		key == "" ||
+		token == "" {
+		return ErrInvalidLock
+	}
+
+	return nil
+}

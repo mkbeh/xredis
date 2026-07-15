@@ -4,27 +4,53 @@
 
 **Lightweight Redis wrapper for Go, built on top of [go-redis](https://github.com/redis/go-redis).**
 
-![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Go](https://github.com/mkbeh/xredis/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/mkbeh/xredis/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mkbeh/xredis.svg)](https://pkg.go.dev/github.com/mkbeh/xredis)
+[![codecov](https://codecov.io/gh/mkbeh/xredis/branch/main/graph/badge.svg)](https://codecov.io/gh/mkbeh/xredis)
 
 </div>
 
-`xredis` wraps the excellent [`go-redis`](https://github.com/redis/go-redis) client with a compact API for common Redis
-workflows: standalone and cluster clients, typed value helpers, hash mapping, rate limiting, TLS configuration,
-pipeline-based bulk deletion, and Redis observability with OpenTelemetry and Prometheus.
+`xredis` builds on the [go-redis](https://github.com/redis/go-redis) client with a compact API for common Redis
+workflows and application-level reliability patterns. It provides focused helpers for native and structured values,
+typed caching, atomic compare operations (CAS/CAD), lease and fenced locks, distributed rate limiting, bulk pipelines,
+topology-wide scans, and OpenTelemetry metrics and tracing.
+
+The library preserves the topology support and core behavior of `go-redis` while reducing boilerplate around common
+usage patterns.
+
+Runnable examples are available in the [examples](examples) directory.
 
 ## Features
 
-* **Clients**: Standalone and cluster Redis client support.
-* **Values**: Typed helpers for reading and writing Redis values.
-* **Hashes**: Hash operations with struct mapping.
-* **Pipelines**: Pipeline-based bulk delete helpers.
-* **Limiting**: Rate limiting via `redis.Limiter` for standalone clients.
-* **Observability**: OpenTelemetry tracing and metrics through `redisotel` and Prometheus metrics.
-* **Security**: TLS configuration support.
-* **Configuration**: Configure via Go structs or environment variables.
+* **Multiple topologies** — standalone Redis, Redis Cluster, Sentinel/failover, failover Cluster, and client-side
+  sharded Ring deployments.
+* **Native and structured values** — standard Redis scalar types use native `go-redis` encoding and scanning, while
+  structured values use a configurable `Codec`.
+* **Command helpers** — typed value readers, conditional writes, atomic counters, existence checks, deletion helpers,
+  and struct-to-hash mapping.
+* **Typed cache-aside** — generic `Cache[T]` workflows with TTL jitter, negative caching, configurable not-found
+  detection, and singleflight deduplication for concurrent misses.
+* **Atomic compare operations** — Lua-backed compare-and-swap (CAS) and compare-and-delete (CAD) operations for exact
+  Redis string values and individual hash fields.
+* **Versioned structured values** — generic `VersionedStore[T]` workflows with opaque revision tokens, atomic
+  initialization through `SetIfAbsent`, optimistic updates, conditional deletion, and configurable expiration.
+* **Distributed locks** — token-based lease locks and fenced locks with monotonically increasing fencing tokens.
+* **Distributed rate limiting** — atomic fixed window, sliding window, and token bucket algorithms implemented with
+  server-side Lua scripts.
+* **Bulk operations and pipelines** — helpers for batched key-value writes, structured values, hashes, deletion, and
+  unlink operations.
+* **Topology-wide scans** — cursor-based iteration across Redis Cluster masters and Redis Ring shards, with type
+  filtering and per-key or per-batch handlers.
+* **Distributed tracing** — OpenTelemetry command tracing through `redisotel`, with configurable filters, attributes,
+  and caller information.
+* **Metrics** — native `go-redis` metrics together with wrapper-level OpenTelemetry instrumentation for caches, locks,
+  and rate limiters.
+* **Production configuration** — TLS and mTLS, ACL authentication, dynamic credential providers, retries, backoff,
+  timeouts, custom dialers, and hooks.
 
 ## Installation
+
+This repository contains the core `xredis` module. The core package is released from the repository root:
 
 ```bash
 go get github.com/mkbeh/xredis
@@ -32,334 +58,783 @@ go get github.com/mkbeh/xredis
 
 ## Quick start
 
-The example below creates a standalone Redis client and stores a simple value.
+The following example demonstrates how to initialize the `xredis` client with client options, verify the connection, and
+perform basic key-value operations with TTL support.
 
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	redis "github.com/mkbeh/xredis"
-)
-
-func main() {
-	ctx := context.Background()
-
-	client, err := redis.NewClient(
-		redis.WithConfig(&redis.Config{
-			Addrs: "localhost:6379",
-		}),
-		redis.WithClientID("my-service"),
-	)
-	if err != nil {
-		log.Fatal("failed to init Redis client:", err)
-	}
-	defer client.Close()
-
-	if err := client.Set(ctx, "greeting", "hello", 0); err != nil {
-		log.Fatal("set failed:", err)
-	}
-
-	var value string
-	if err := client.Get(ctx, "greeting", &value); err != nil {
-		log.Fatal("get failed:", err)
-	}
-
-	fmt.Println(value)
-}
-```
-
-More examples: [examples/sample](https://github.com/mkbeh/xredis/tree/main/examples/sample)
-
-## Typed Values
-
-`xredis` provides typed helpers that return a clean `ok` flag when a key is missing, removing the need to check for raw
-`redis.Nil` errors manually.
 
 <!-- @formatter:off -->
 ```go
-value, ok, err := client.String(ctx, "greeting")
+ctx := context.Background()
+
+// Initialize the client
+client, err := xredis.NewClient(
+    xredis.WithClientConfig(&xredis.ClientConfig{
+        Addr: "localhost:6379",
+        DB:   0,
+    }),
+    xredis.WithClientID("example-client"),
+)
 if err != nil {
-	return fmt.Errorf("failed to fetch greeting: %w", err)
+    return err
+}
+defer func() {
+    if err := client.Close(); err != nil {
+        log.Println("unable to close Redis client:", err)
+    }
+}()
+
+// Verify connection
+if err := client.Ping(ctx); err != nil {
+    return err
+}
+
+// Write value with TTL
+if err := client.Set(ctx, "message", "hello from xredis", time.Minute); err != nil {
+    return err
+}
+
+// Read value
+value, ok, err := client.String(ctx, "message")
+if err != nil {
+    return err
 }
 if !ok {
-	// key does not exist
-	return nil
+    return xredis.ErrKeyNotFound
 }
 
-fmt.Println(value)
+fmt.Println(value) // Outputs: hello from xredis
 ```
 <!-- @formatter:on -->
 
-Available typed helpers include: `String`, `Bool`, `Bytes`, `Float64`, `Int`, `Int64`, and `Uint64`.
+## Clients and topologies
 
-## Struct Values
+`xredis` provides dedicated constructors for each supported Redis topology, with a specialized configuration struct for
+its connection and routing settings.
 
-Use `SetStruct` to store structured data using a configurable marshaller. By default, it uses standard `json.Marshal`,
-but you can easily override it.
+| Topology                           | Constructor                | Configuration    |
+| :--------------------------------- | :------------------------- | :--------------- |
+| **Standalone Redis**               | `NewClient`                | `ClientConfig`   |
+| **Redis Cluster**                  | `NewClusterClient`         | `ClusterConfig`  |
+| **Redis Sentinel / Failover**      | `NewFailoverClient`        | `FailoverConfig` |
+| **Redis Sentinel with replica routing**        | `NewFailoverClusterClient` | `FailoverConfig` |
+| **Client-side sharding with Ring** | `NewRing`                  | `RingConfig`     |
+
+### Configuration capabilities
+
+Configuration structs are plain Go structs and can be loaded with any configuration library. For a complete
+environment-based setup, see [examples/env](examples/env).
+
+Configuration structs and constructor options cover:
+
+* **Connectivity and pools** — custom dialers, connection pooling, and routing strategies.
+* **Security and authentication** — ACL credentials, dynamic credential providers, TLS, and mTLS.
+* **Protocol and lifecycle** — RESP protocol selection, client identity, and hooks.
+* **Data encoding** — configurable codecs for structured values.
+* **Resilience** — retries, backoff policies, and fine-grained operation timeouts.
+* **Observability** — OpenTelemetry tracing and custom metric labels.
+
+### Cluster and sharding considerations
+
+When using `xredis` with Redis Cluster or Redis Ring, keep the following topology-specific behaviors in mind:
+
+* **Single-key operations** — compare-and-swap, compare-and-delete, lease locks, and rate-limit decisions operate on a
+  single Redis key and do not require cross-slot coordination.
+* **Fenced locks** — fenced locks use both a lock key and a counter key. In Redis Cluster, both keys must map to the
+  same hash slot. Use matching hash tags, such as `lock:{order:42}` and `fence:{order:42}`.
+* **Bulk helpers** — helpers such as `DeleteMany` and `UnlinkMany` use independent single-key commands where required,
+  avoiding multi-key `CROSSSLOT` errors. Large inputs should still be divided into reasonable batches.
+* **Topology-wide scans** — Redis Cluster scan cursors are node-local. The topology-wide scan helpers iterate over each
+  master node independently. Redis Ring scans iterate over each live shard.
+* **Raw client access** — commands executed through `Client.Raw()` bypass the higher-level topology-aware helpers.
+  Multi-key commands must follow the normal Redis Cluster hash-slot rules.
+
+### Example
+
+The following example initializes a Redis Cluster client with a set of startup node addresses.
 
 <!-- @formatter:off -->
 ```go
-type Session struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
-}
-
-session := Session{
-	UserID: "user-1",
-	Role:   "admin",
-}
-
-if err := client.SetStruct(ctx, "session:1", session, time.Hour); err != nil {
-	log.Fatalf("failed to store session struct: %v", err)
-}
-```
-<!-- @formatter:on -->
-
-
-To inject a custom encoder (e.g., Protobuf, MessagePack, or an optimized JSON library), use `WithMarshaller`:
-
-<!-- @formatter:off -->
-```go
-client, err := redis.NewClient(
-	redis.WithConfig(cfg),
-	redis.WithMarshaller(customMarshal),
+cluster, err := xredis.NewClusterClient(
+    xredis.WithClusterConfig(&xredis.ClusterConfig{
+        Addrs: []string{
+            "localhost:7000",
+            "localhost:7001",
+            "localhost:7002",
+        },
+    }),
 )
 if err != nil {
-	log.Fatalf("failed to initialize xredis client: %v", err)
+    return err
 }
-defer client.Close()
 ```
 <!-- @formatter:on -->
 
-## Hash Operations
+## Values and encoding
 
-`xredis` simplifies working with Redis hashes by providing seamless struct-to-hash and hash-to-struct mapping utilities.
+`xredis` supports both native Redis scalar values and structured Go values encoded through a configurable codec.
+
+### Scalar values
+
+Supported scalar types are passed directly to `go-redis` for native encoding and scanning:
+
+<!-- @formatter:off -->
+```go
+if err := client.Set(ctx, "counter", 42, time.Minute); err != nil {
+    return err
+}
+
+counter, ok, err := client.Int64(ctx, "counter")
+```
+<!-- @formatter:on -->
+
+Available scalar readers include `String`, `Bytes`, `Bool`, `Int`, `Int64`, `Uint64`, and `Float64`.
+
+Additional command helpers include `SetNX`, `SetXX`, `GetDel`, `GetEx`, `Incr`, `Decr`, `Exists`, and `Delete`.
+
+### Codec-backed values
+
+Structured values are encoded through the client-level `Codec`. JSON is used by default.
 
 <!-- @formatter:off -->
 ```go
 type User struct {
-	Name  string `redis:"name"`
-	Email string `redis:"email"`
+    ID   string `json:"id"`
+    Name string `json:"name"`
 }
 
-user := User{
-	Name:  "Alice",
-	Email: "alice@example.com",
+if err := client.SetStruct(
+    ctx,
+    "user:42",
+    User{
+        ID:   "42",
+        Name: "Ada",
+    },
+    time.Hour,
+); err != nil {
+    return err
 }
 
-// 1. Set a single hash field
-if err := client.HSet(ctx, "user:1", "name", user.Name, time.Hour); err != nil {
-	log.Fatalf("failed to set hash field: %v", err)
-}
+var user User
 
-// 2. Automatically map entire struct fields into a Redis Hash
-if err := client.HSetObject(ctx, "user:1", user, time.Hour); err != nil {
-	log.Fatalf("failed to set hash object from struct: %v", err)
-}
-
-// 3. Scan Redis Hash fields back into a Go struct directly
-var dst User
-if err := client.HGetAll(ctx, "user:1", &dst); err != nil {
-	log.Fatalf("failed to scan hash fields into struct: %v", err)
-}
+ok, err := client.GetStruct(ctx, "user:42", &user)
 ```
 <!-- @formatter:on -->
 
-## Bulk Delete
-
-Use `MassDelete` to safely clear multiple keys within a single network round-trip using an atomic Redis pipeline.
+To use another serialization format, such as MessagePack or Protobuf, configure a custom codec when creating the client:
 
 <!-- @formatter:off -->
 ```go
-keys := []string{
-	"cache:user:1",
-	"cache:user:2",
-	"cache:user:3",
+client, err := xredis.NewClient(
+    xredis.WithClientConfig(cfg),
+    xredis.WithCodec(customCodec),
+)
+```
+<!-- @formatter:on -->
+
+> [!NOTE]
+> `SetStruct` and `GetStruct` store codec-backed Redis string values without revision metadata. For optimistic
+> concurrency on structured values, use `VersionedStore[T]`.
+
+### Redis hashes
+
+`HSet` supports flat field-value pairs, slices, maps, structs, and pointers to structs. It can also apply an expiration
+TTL to the hash key. Struct field names are configured using standard `redis` tags.
+
+`HGetAll` can scan the resulting hash back into a struct:
+
+<!-- @formatter:off -->
+```go
+type UserHash struct {
+    Name   string `redis:"name"`
+    Active bool   `redis:"active"`
 }
 
-if err := client.MassDelete(ctx, keys); err != nil {
-	log.Fatalf("pipeline mass delete failed: %v", err)
+if err := client.HSet(
+    ctx,
+    "user:42",
+    time.Hour,
+    UserHash{
+        Name:   "Grace",
+        Active: true,
+    },
+); err != nil {
+    return err
+}
+
+var user UserHash
+
+ok, err := client.HGetAll(ctx, "user:42", &user)
+```
+<!-- @formatter:on -->
+
+## Typed cache
+
+`Cache[T]` implements a typed cache-aside workflow with TTL jitter, negative caching, and loader deduplication for
+concurrent misses.
+
+<!-- @formatter:off -->
+```go
+cache, err := xredis.NewCache[User](
+    client,
+    xredis.WithCachePrefix("cache:user:"),
+    xredis.WithCacheTTL(time.Minute),
+    xredis.WithCacheJitter(5*time.Second),
+    xredis.WithCacheNegativeTTL(30*time.Second),
+)
+if err != nil {
+    return err
+}
+
+user, err := cache.GetOrLoad(ctx, "42", func(ctx context.Context) (User, error) {
+    return repository.GetUser(ctx, "42")
+})
+```
+<!-- @formatter:on -->
+
+### Core behaviors
+
+* **Singleflight deduplication** — concurrent misses for the same key within one cache instance share a single loader
+  execution, reducing duplicate requests to upstream data sources.
+* **Negative caching** — `WithCacheNegativeTTL` caches not-found results for a limited time. Domain-specific errors can
+  be recognized through `WithCacheNotFound`.
+* **Interoperable positive values** — positive entries are stored without an internal metadata envelope and remain
+  readable through regular Redis commands.
+* **Type-aware encoding** — supported Redis scalar types use native `go-redis` encoding and scanning, while structured
+  and user-defined values use the configured cache `Codec`.
+* **Typed API** — `Get`, `Set`, and `GetOrLoad` operate on the cache type `T`, and loaders must return the same type.
+  Interface cache types such as `Cache[any]` are rejected when the cache is created.
+
+### Custom negative markers
+
+Negative cache entries are represented by a reserved byte sequence. The default marker is `[]byte{0}`.
+
+Use `WithCacheNegativeMarker` when the default marker may also occur as a valid cached value:
+
+<!-- @formatter:off -->
+```go
+cache, err := xredis.NewCache[User](
+    client,
+    xredis.WithCacheNegativeTTL(30*time.Second),
+    xredis.WithCacheNegativeMarker([]byte("\x00xredis:not-found\xff")),
+)
+```
+<!-- @formatter:on -->
+
+> [!WARNING]
+> Cache instances sharing the same keyspace must use the same negative marker. When changing the marker, remove existing
+> negative entries or use a new cache prefix.
+
+## Atomic compare operations
+
+`xredis` provides atomic compare-and-swap (CAS) and compare-and-delete (CAD) operations for raw Redis string values,
+individual hash fields, and structured values. The operations are executed atomically in Redis using server-side Lua
+scripts.
+
+### Raw values
+
+`CompareAndSwap` and `CompareAndDelete` compare the exact Redis string representation of a value before modifying or
+removing it:
+
+<!-- @formatter:off -->
+```go
+// Update the status only if it is still "processing".
+swapped, err := client.CompareAndSwap(
+    ctx,
+    "order:42:status",
+    "processing",
+    "completed",
+    xredis.KeepTTL,
+)
+if err != nil {
+    return err
+}
+if !swapped {
+    return errors.New("status changed concurrently")
+}
+
+// Delete the key only if its current value is "completed".
+deleted, err := client.CompareAndDelete(
+    ctx,
+    "order:42:status",
+    "completed",
+)
+if err != nil {
+    return err
+}
+if !deleted {
+    return errors.New("status changed before deletion")
 }
 ```
 <!-- @formatter:on -->
+
+> [!NOTE]
+> Raw compare operations use the standard `go-redis` argument encoding and compare values byte-for-byte. The `expected`
+> value must use the same representation as the value originally stored in Redis.
+
+### Hash fields
+
+`HCompareAndSwap` and `HCompareAndDelete` atomically compare and modify an individual Redis hash field:
+
+<!-- @formatter:off -->
+```go
+swapped, err := client.HCompareAndSwap(
+    ctx,
+    "order:42",
+    "status",
+    "processing",
+    "completed",
+)
+if err != nil {
+    return err
+}
+if !swapped {
+    return errors.New("status changed concurrently")
+}
+```
+<!-- @formatter:on -->
+
+> [!NOTE]
+> Hash-field compare operations preserve the existing expiration of the hash key. If `HCompareAndDelete` removes the
+> last remaining field, Redis removes the hash key.
+
+### Versioned structured values
+
+`VersionedStore[T]` provides revision-based optimistic concurrency control for structured values. Instead of sending
+the previous encoded value back to Redis for comparison, update and delete operations validate a compact opaque
+revision. A successful update still transmits the new encoded value.
+
+#### Storage schema
+
+Each versioned object is stored as a single Redis hash:
+
+| Field | Representation | Description |
+| :--- | :--- | :--- |
+| `value` | Binary-safe string | Encoded representation of `T` |
+| `revision` | String | Opaque optimistic-concurrency token |
+
+#### Example
+
+The following example creates a versioned order, reads its current revision, updates it conditionally, and deletes it
+only if the revision still matches.
+
+<!-- @formatter:off -->
+```go
+// Initialize a typed versioned store.
+store, err := xredis.NewVersionedStore[Order](
+	client,
+	xredis.WithVersionedStorePrefix("versioned:order:"),
+)
+if err != nil {
+	return err
+}
+
+// Create the object only if the Redis key does not exist.
+revision, created, err := store.SetIfAbsent(
+	ctx,
+	"42",
+	Order{
+		ID:     "42",
+		Status: "processing",
+	},
+	time.Hour,
+)
+if err != nil {
+	return err
+}
+if !created {
+	return errors.New("order already exists")
+}
+
+fmt.Println("created revision:", revision)
+
+// Read the current value and revision.
+entry, ok, err := store.Get(ctx, "42")
+if err != nil {
+	return err
+}
+if !ok {
+	return xredis.ErrKeyNotFound
+}
+
+// Update the value locally.
+updated := entry.Value
+updated.Status = "completed"
+
+// Replace the value only if the revision remains unchanged.
+newRevision, swapped, err := store.CompareAndSwap(
+	ctx,
+	"42",
+	entry.Revision,
+	updated,
+	xredis.KeepTTL,
+)
+if err != nil {
+	return err
+}
+if !swapped {
+	return errors.New("order changed concurrently")
+}
+
+// Delete the object only if the revision still matches.
+deleted, err := store.CompareAndDelete(
+	ctx,
+	"42",
+	newRevision,
+)
+if err != nil {
+	return err
+}
+if !deleted {
+	return errors.New("order changed before deletion")
+}
+```
+<!-- @formatter:on -->
+
+> [!IMPORTANT]
+> `VersionedStore[T]` uses a dedicated Redis hash representation. Keys managed by a versioned store must not be modified
+> through Redis string-value methods such as `Set` or `SetStruct`. Store instances sharing the same keyspace must use
+> the same value type and `Codec`.
+
+### Expiration management
+
+`SetIfAbsent` and `CompareAndSwap` manage the expiration of the versioned object as follows:
+
+| Value             | `SetIfAbsent`                     | `CompareAndSwap`                                             |
+| :---------------- | :--------------------------- | :----------------------------------------------------------- |
+| `xredis.KeepTTL`  | Returns `ErrInvalidTTL`      | Preserves the existing expiration                            |
+| `0`               | Creates a persistent key     | Removes the existing expiration and makes the key persistent |
+| Positive duration | Applies the given expiration | Replaces the existing expiration                             |
+
+For a complete runnable example, see [examples/cas](examples/cas).
+
+## Distributed locks
+
+`xredis` provides two primitives for distributed coordination: token-based **lease locks** and **fenced locks** with
+monotonically increasing fencing tokens. Lock operations use atomic Redis commands and server-side Lua scripts.
+
+### Lease locks
+
+Lease locks use an internally generated or application-provided owner token. `Unlock` and `Extend` succeed only while
+Redis still stores the same token, preventing one client from modifying a lock that has expired and been acquired by
+another client.
+
+<!-- @formatter:off -->
+```go
+lock, acquired, err := client.TryLock(
+    ctx,
+    "lock:order:42",
+    30*time.Second,
+)
+if err != nil {
+    return err
+}
+if !acquired {
+    return errors.New("lock is already held")
+}
+
+defer func() {
+    unlockCtx, cancel := context.WithTimeout(
+        context.Background(),
+        5*time.Second,
+    )
+    defer cancel()
+
+    if err := lock.Unlock(unlockCtx); err != nil &&
+        !errors.Is(err, xredis.ErrLockNotOwned) {
+        log.Println("unable to unlock:", err)
+    }
+}()
+
+// Extend the lease when the protected operation needs more time.
+extended, err := lock.Extend(ctx, 30*time.Second)
+if err != nil {
+    return err
+}
+if !extended {
+    return xredis.ErrLockNotOwned
+}
+```
+<!-- @formatter:on -->
+
+Use `TryLockWithToken` when token generation is managed by the application. Tokens must be unique for every independent
+lock attempt.
+
+### Fenced locks
+
+Fenced locks combine a lease lock with a monotonically increasing fencing token. They protect against stale clients that
+continue operating after their lease has expired, for example after a long pause or network delay.
+
+<!-- @formatter:off -->
+```go
+lock, acquired, err := client.TryFencedLock(
+    ctx,
+    "lock:{order:42}",
+    "fence:{order:42}",
+    30*time.Second,
+)
+if err != nil {
+    return err
+}
+if !acquired {
+    return errors.New("lock is already held")
+}
+
+defer func() {
+    if err := lock.Unlock(context.Background()); err != nil &&
+        !errors.Is(err, xredis.ErrLockNotOwned) {
+        log.Println("unable to unlock fenced lock:", err)
+    }
+}()
+
+// Pass the token to the protected resource with every write.
+fencingToken := lock.FencingToken()
+```
+<!-- @formatter:on -->
+
+The fencing token increases monotonically for each successful acquisition using the same fencing counter key.
+
+#### Critical fencing invariants
+
+* **Downstream enforcement** — the protected resource must persist the latest accepted fencing token and reject
+  operations carrying a smaller token. The Redis lock alone cannot enforce this invariant.
+* **Counter lifetime** — fencing counters do not expire by default, because resetting a counter can make stale tokens
+  valid again. Use `WithFencingCounterTTL` only for resources with a bounded lifecycle and a safe retention period.
+
+> [!WARNING]
+> In Redis Cluster, the lock key and fencing counter key must map to the same hash slot. Use matching Redis hash tags,
+> such as the shared `{order:42}` tag in the example above.
+
+## Rate limiter
+
+`RateLimiter` provides distributed rate limiting with atomic server-side decisions. The algorithm is selected
+independently for each request.
+
+<!-- @formatter:off -->
+```go
+limiter, err := client.RateLimiter(
+    xredis.WithRateLimiterPrefix("rate_limit:"),
+)
+if err != nil {
+    return err
+}
+
+// Fixed window: allow up to 100 requests per minute.
+decision, err := limiter.AllowFixedWindow(
+    ctx,
+    "fixed:user:42",
+    xredis.RateLimit{
+        Limit:  100,
+        Window: time.Minute,
+    },
+)
+if err != nil {
+    return err
+}
+
+if !decision.Allowed {
+    log.Printf(
+        "rate limit exceeded; retry after %v",
+        decision.RetryAfter,
+    )
+
+    return errors.New("too many requests")
+}
+
+// Token bucket: refill 10 tokens per second and allow bursts up to 20 requests.
+bucketDecision, err := limiter.AllowTokenBucket(
+    ctx,
+    "token:user:42",
+    xredis.TokenBucketRateLimit{
+        Limit:  10,
+        Window: time.Second,
+        Burst:  20,
+    },
+)
+if err != nil {
+    return err
+}
+
+if !bucketDecision.Allowed {
+    return errors.New("too many requests")
+}
+```
+<!-- @formatter:on -->
+
+### Available algorithms
+
+* **Fixed window** (`Allow` / `AllowFixedWindow`) — simple and memory-efficient, but may allow bursts around window
+  boundaries.
+* **Sliding window** (`AllowSlidingWindow`) — tracks accepted requests in a Redis sorted set and provides more accurate
+  limiting within the active window.
+* **Token bucket** (`AllowTokenBucket`) — supports controlled bursts with gradual token refill.
+
+Each algorithm uses a different Redis data structure. Use separate keys when applying multiple algorithms to the same
+subject.
+
+> [!NOTE]
+> Every rate-limit decision is executed atomically using a single Redis key. The algorithms are therefore compatible
+> with Redis Cluster without requiring multi-key hash-slot coordination.
+
+## Pipelines and topology-wide scans
+
+`xredis` provides pipeline helpers for bulk operations and topology-aware scan helpers for standalone Redis, Cluster,
+and Ring clients.
+
+### Pipeline helpers
+
+Pipeline helpers execute independent single-key commands in batches:
+
+<!-- @formatter:off -->
+```go
+err := client.SetMany(ctx, []xredis.SetItem{
+    {
+        Key:        "message:1",
+        Value:      "hello",
+        Expiration: time.Minute,
+    },
+    {
+        Key:        "message:2",
+        Value:      "world",
+        Expiration: time.Minute,
+    },
+})
+```
+<!-- @formatter:on -->
+
+
+
+`SetMany` and `SetStructMany` batch string-value writes, `HSetMany` batches hash writes, and `DeleteMany` and
+`UnlinkMany` batch key removal.
+
+> [!IMPORTANT]
+> For Redis Cluster and Ring clients, `DeleteMany` and `UnlinkMany` use pipelined single-key commands to avoid multi-key
+> cross-slot errors. Large inputs should be split into reasonable batches at the call site.
+
+### Topology-wide scans
+
+Topology-wide scan helpers coordinate iteration across Redis nodes and support both per-key and per-batch handlers:
+
+<!-- @formatter:off -->
+```go
+err := client.ScanEachBatch(
+    ctx,
+    xredis.ScanOptions{
+        Match: "cache:user:*",
+        Count: 500,
+    },
+    func(ctx context.Context, keys []string) error {
+        return client.UnlinkMany(ctx, keys)
+    },
+)
+```
+<!-- @formatter:on -->
+
+Available scan helpers include:
+
+* `Scan` — reads one cursor page.
+* `ScanAll` — collects all matching keys.
+* `ScanEach` — invokes a handler for each key.
+* `ScanEachBatch` — invokes a handler for each page.
+* `ScanDelete` and `ScanUnlink` — remove matching keys.
+
+#### Scan behavior
+
+* **Topology-wide execution** — Redis Cluster scans run on each master node. Redis Ring scans run on each live shard.
+* **Concurrency** — handlers may be invoked concurrently by different node scans. Shared state must be synchronized.
+* **Idempotency** — Redis `SCAN` may return duplicate keys, especially while the keyspace is changing. Handlers should
+  be idempotent.
+* **Consistency** — `SCAN` is incremental and does not provide a point-in-time snapshot of the keyspace.
 
 ## Observability
 
-`xredis` instruments Redis commands through `redisotel` and exposes Prometheus metrics out of the box.
+`xredis` integrates with OpenTelemetry for Redis metrics and distributed tracing.
+
+### Metrics
+
+Initialize observability once before creating Redis clients. Call the returned shutdown function during application
+shutdown:
 
 <!-- @formatter:off -->
 ```go
-client, err := redis.NewClient(
-	redis.WithConfig(cfg),
-	redis.WithClientID("my-service"),
-	redis.WithTraceProvider(tracerProvider),
-	redis.WithMeterProvider(meterProvider),
-	redis.WithMetricsNamespace("myapp"),
-	redis.WithDBStatement(false), // hide raw Redis commands from traces
+shutdownObservability, err := xredis.InitObservability(
+    xredis.WithMeterProvider(meterProvider),
 )
 if err != nil {
-	log.Fatalf("failed to initialize observed redis client: %v", err)
+    return err
 }
-defer client.Close()
-```
-<!-- @formatter:on -->
+defer func() {
+    if err := shutdownObservability(); err != nil {
+        log.Println("unable to shutdown Redis observability:", err)
+    }
+}()
 
-Prometheus metrics are registered automatically on client creation.
-
-## TLS Support
-
-Pass a custom TLS configuration via `WithTLS` to secure your connection.
-
-<!-- @formatter:off -->
-```go
-client, err := redis.NewClient(
-	redis.WithConfig(cfg),
-	redis.WithTLS(&tls.Config{
-		MinVersion: tls.VersionTLS12,
-	}),
+client, err := xredis.NewClient(
+    xredis.WithClientConfig(cfg),
+    xredis.WithMetricLabel("application", "orders-api"),
 )
-if err != nil {
-	log.Fatalf("failed to initialize secure redis client: %v", err)
-}
-defer client.Close()
 ```
 <!-- @formatter:on -->
 
-## Rate Limiting
+`InitObservability` enables native `go-redis` metrics through `redisotel-native` together with `xredis` wrapper-level
+metrics.
 
-Standalone clients can inject a custom `go-redis` rate limiter to control request throughput.
+Native metric groups, command filters, histogram aggregation, and histogram buckets are configured through
+`ObservabilityOption` values. Additional bounded labels can be attached to an individual client with `WithMetricLabel`.
+
+> [!WARNING]
+> Metric label values should have low and bounded cardinality. Avoid identifiers such as Redis keys, user IDs, request
+> IDs, or other values that can create an unbounded number of time series.
+
+Prometheus exporters expose the wrapper-level OpenTelemetry instruments with the following names:
+
+| Prometheus metric                              | Type      | Description                                                 |
+| :--------------------------------------------- | :-------- | :---------------------------------------------------------- |
+| `redis_client_cache_requests_total`            | Counter   | Counts cache lookups by operation and result.               |
+| `redis_client_cache_loader_duration_seconds`   | Histogram | Measures cache loader execution duration.                   |
+| `redis_client_cache_singleflight_shared_total` | Counter   | Counts requests that received a shared singleflight result. |
+| `redis_client_lock_operations_total`           | Counter   | Counts lease and fenced lock operations by outcome.         |
+| `redis_client_rate_limiter_decisions_total`    | Counter   | Counts rate-limit decisions by algorithm and outcome.       |
+| `redis_client_rate_limiter_duration_seconds`   | Histogram | Measures rate-limit decision duration.                      |
+
+### Metric labels
+
+The following labels are exposed by the wrapper-level `xredis` metrics and can be used to filter, group, and aggregate
+telemetry data:
+
+| Label                                 | Values                                           | Description                                   |
+| :------------------------------------ | :----------------------------------------------- | :-------------------------------------------- |
+| `redis_client_cache_operation`        | `get`, `get_or_load`                             | Cache operation being performed               |
+| `redis_client_cache_result`           | `hit`, `miss`, `negative_hit`, `error`           | Result of the cache lookup                    |
+| `redis_client_cache_loader_outcome`   | `success`, `not_found`, `error`                  | Outcome of the cache loader execution         |
+| `redis_client_lock_type`              | `lease`, `fenced`                                | Type of distributed lock                      |
+| `redis_client_lock_operation`         | `acquire`, `extend`, `unlock`                    | Lock operation being performed                |
+| `redis_client_lock_outcome`           | `success`, `contended`, `not_owned`, `error`     | Result of the lock operation                  |
+| `redis_client_rate_limiter_algorithm` | `fixed_window`, `sliding_window`, `token_bucket` | Rate-limiting algorithm used for the decision |
+| `redis_client_rate_limiter_outcome`   | `allowed`, `rejected`, `error`                   | Result of the rate-limit decision             |
+
+### Tracing
+
+Tracing is configured separately for each Redis client through the `redisotel` integration:
 
 <!-- @formatter:off -->
 ```go
-client, err := redis.NewClient(
-	redis.WithConfig(cfg),
-	redis.WithLimiter(limiter),
+client, err := xredis.NewClient(
+    xredis.WithClientConfig(cfg),
+    xredis.WithTracerProvider(tracerProvider),
+    xredis.WithTracingDBStatement(false),
+    xredis.WithTracingCallerEnabled(true),
 )
-if err != nil {
-	log.Fatalf("failed to initialize rate-limited redis client: %v", err)
-}
-defer client.Close()
 ```
 <!-- @formatter:on -->
 
-## Error Handling
+Additional tracing options support custom span attributes, DB system attributes, command and pipeline filters, dial
+filters, and caller information.
 
-`xredis` provides explicit flags for simple lookups and exports normalized errors for complex operations, eliminating
-the need to import underlying driver errors manually.
+> [!WARNING]
+> `WithTracingDBStatement(true)` can include Redis command contents in spans. Avoid enabling it when commands may
+> contain sensitive keys, values, credentials, or personally identifiable information.
 
-### Missing Keys (Typed Helpers)
-
-For basic data types, helpers return an explicit `ok` flag to handle missing keys cleanly without triggering an error.
-
-<!-- @formatter:off -->
-```go
-value, ok, err := client.String(ctx, "greeting")
-if err != nil {
-	return fmt.Errorf("failed to fetch greeting: %w", err)
-}
-if !ok {
-	// key does not exist
-	return nil
-}
-```
-<!-- @formatter:on -->
-
-### Missing Keys (Hash & Object Helpers)
-
-Hash and object operations return exported, predictable errors when a key or field is missing:
-
-<!-- @formatter:off -->
-```go
-err := client.HGetAll(ctx, "user:1", &dst)
-if errors.Is(err, redis.ErrKeyNotFound) {
-	// key does not exist
-	return nil
-}
-if err != nil {
-	return fmt.Errorf("hash operation failed: %w", err)
-}
-```
-<!-- @formatter:on -->
-
-### Exported Errors Reference
-
-| Error | Description |
-| :--- | :--- |
-| `ErrKeyNotFound` | The requested key or hash field does not exist. |
-| `ErrInvalidFieldType` | The struct field type is unsupported for hash mapping operations. |
-
-## Configuration
-
-The `Config` struct can be initialized directly in Go. It also includes `envconfig` tags, allowing you to seamlessly
-populate it from environment variables using your preferred configuration library.
-
-### Config Struct
-
-<!-- @formatter:off -->
-```go
-cfg := &redis.Config{
-    Addrs:    "localhost:6379",
-    Network:  "tcp",
-    Protocol: 3,
-
-    Username: "user",
-    Password: "password",
-    DB:       0, // standalone mode only
-
-    MaxRetries:      3,
-    MinRetryBackoff: 8 * time.Millisecond,
-    MaxRetryBackoff: 512 * time.Millisecond,
-
-    DialTimeout:  5 * time.Second,
-    ReadTimeout:  3 * time.Second,
-    WriteTimeout: 3 * time.Second,
-
-    PoolSize:        10 * runtime.GOMAXPROCS(0),
-    MinIdleConns:    0,
-    MaxIdleConns:    0,
-    MaxActiveConns:  0,
-    ConnMaxIdleTime: 30 * time.Minute,
-
-    DisableIdentity: false,
-}
-```
-<!-- @formatter:on -->
-
-### Environment Variables
-
-| Env Variable | Default | Description |
-| :--- | :--- | :--- |
-| `REDIS_ADDRS` | `127.0.0.1:6379` | Comma-separated list of `host:port` addresses. |
-| `REDIS_NETWORK` | `tcp` | Network type: `tcp` or `unix`. |
-| `REDIS_PROTOCOL` | `3` | RESP protocol version: `2` or `3`. |
-| `REDIS_USERNAME` | — | ACL username for Redis 6+. |
-| `REDIS_PASSWORD` | — | Password. |
-| `REDIS_DB` | `0` | Database index, standalone mode only. |
-| `REDIS_MAX_RETRIES` | `3` | Maximum retries; `-1` disables retries. |
-| `REDIS_MIN_RETRY_BACKOFF` | `8ms` | Minimum backoff between retries; `-1` disables backoff. |
-| `REDIS_MAX_RETRY_BACKOFF` | `512ms` | Maximum backoff between retries; `-1` disables backoff. |
-| `REDIS_MAX_REDIRECTS` | `len(nodes)+1` | Maximum `MOVED` / `ASK` redirects, cluster mode only. |
-| `REDIS_READONLY` | `true` | Route read commands to replicas, cluster mode only. |
-| `REDIS_ROUTE_BY_LATENCY` | `false` | Route reads to the nearest node, cluster mode only. |
-| `REDIS_ROUTE_RANDOMLY` | `false` | Route reads to a random node, cluster mode only. |
-| `REDIS_DIAL_TIMEOUT` | `5s` | Timeout for new connections. |
-| `REDIS_READ_TIMEOUT` | `3s` | Socket read timeout; `-1` blocks, `-2` disables deadline. |
-| `REDIS_WRITE_TIMEOUT` | `3s` | Socket write timeout; `-1` blocks, `-2` disables deadline. |
-| `REDIS_CONTEXT_TIMEOUT_ENABLED` | `false` | Respect context deadlines for commands. |
-| `REDIS_POOL_SIZE` | `10 * GOMAXPROCS` | Connection pool size per node. |
-| `REDIS_POOL_FIFO` | `false` | `true` = FIFO pool, `false` = LIFO pool. |
-| `REDIS_POOL_TIMEOUT` | `ReadTimeout+1s` | Wait time for a free connection. |
-| `REDIS_MIN_IDLE_CONNS` | `0` | Minimum idle connections. |
-| `REDIS_MAX_IDLE_CONNS` | `0` | Maximum idle connections. |
-| `REDIS_MAX_ACTIVE_CONNS` | `0` | Maximum active connections per node; `0` means unlimited. |
-| `REDIS_CONN_MAX_IDLE_TIME` | `30m` | Maximum idle time per connection; `-1` disables it. |
-| `REDIS_CONN_MAX_LIFETIME` | unlimited | Maximum lifetime per connection. |
-| `REDIS_DISABLE_IDENTITY` | `false` | Disable `CLIENT SETNAME` on connect. |
-| `REDIS_UNSTABLE_RESP3` | `false` | Enable unstable RESP3 mode for Redis Search. |
+For a complete OTLP tracing setup with HTTP parent spans and Jaeger, see [examples/otel](examples/otel).
 
 ## License
 

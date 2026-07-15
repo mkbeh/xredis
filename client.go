@@ -1,410 +1,111 @@
-package redis
+package xredis
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
-	"errors"
-	"log/slog"
-	"reflect"
-	"time"
 
-	"github.com/mkbeh/xredis/internal/pkg/collector"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 )
 
+// Client is an opinionated Redis client wrapper.
 type Client struct {
-	id           string
-	suffix       string
-	conn         rdb.UniversalClient
-	cfg          *Config
-	tls          *tls.Config
-	logger       *slog.Logger
-	limiter      rdb.Limiter
-	marshaller   MarshallerFunc
-	meterOptions []redisotel.MetricsOption
-	traceOptions []redisotel.TracingOption
-	namespace    string
-	labels       map[string]string
+	conn    rdb.UniversalClient
+	codec   Codec
+	metrics *metrics
 }
 
+// NewClient creates a standalone Redis client.
 func NewClient(opts ...Option) (*Client, error) {
-	return newClient(false, opts)
+	options := newOptions(opts...)
+
+	redisOpts, err := options.clientOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	return newClient(rdb.NewClient(redisOpts), options)
 }
 
+// NewClusterClient creates a Redis Cluster client.
 func NewClusterClient(opts ...Option) (*Client, error) {
-	return newClient(true, opts)
-}
+	options := newOptions(opts...)
 
-func newClient(cluster bool, opts []Option) (*Client, error) {
-	c := &Client{
-		cfg:    defaultConfig(),
-		logger: slog.Default(),
-	}
-
-	for _, opt := range opts {
-		opt.apply(c)
-	}
-
-	c.logger = c.logger.With(slog.String("component", "redis"))
-
-	if c.marshaller == nil {
-		c.marshaller = json.Marshal
-	}
-
-	if cluster {
-		connOpts := parseClusterConfig(c.cfg)
-		connOpts.TLSConfig = c.tls
-		connOpts.ClientName = c.getID()
-		c.conn = rdb.NewClusterClient(connOpts)
-	} else {
-		connOpts := parseClientConfig(c.cfg)
-		connOpts.TLSConfig = c.tls
-		connOpts.ClientName = c.getID()
-		connOpts.Limiter = c.limiter
-		c.conn = rdb.NewClient(connOpts)
-	}
-
-	if err := c.exposeInstrumenting(); err != nil {
+	redisOpts, err := options.clusterOptions()
+	if err != nil {
 		return nil, err
 	}
 
-	if err := c.conn.Ping(context.Background()).Err(); err != nil {
+	return newClient(rdb.NewClusterClient(redisOpts), options)
+}
+
+// NewFailoverClient creates a Redis Sentinel / failover client.
+func NewFailoverClient(opts ...Option) (*Client, error) {
+	options := newOptions(opts...)
+
+	redisOpts, err := options.failoverOptions()
+	if err != nil {
 		return nil, err
 	}
 
-	c.exposeMetrics()
-
-	metricsCollector := collector.NewCollector(c.namespace, "redis", c.labels, c.conn)
-	prometheus.MustRegister(metricsCollector)
-
-	return c, nil
+	return newClient(rdb.NewFailoverClient(redisOpts), options)
 }
 
-// Exists returns if key exists.
-func (c *Client) Exists(ctx context.Context, key string) (exists bool, err error) {
-	res := c.conn.Exists(ctx, key)
-	if err = res.Err(); err != nil {
-		return exists, err
-	}
+// NewFailoverClusterClient creates a Redis Sentinel / failover cluster client.
+func NewFailoverClusterClient(opts ...Option) (*Client, error) {
+	options := newOptions(opts...)
 
-	exists = res.Val() == 1
-	return exists, err
-}
-
-// HExists returns if field is an existing field in the hash stored at key.
-func (c *Client) HExists(ctx context.Context, key, field string) (exists bool, err error) {
-	return c.conn.HExists(ctx, key, field).Result()
-}
-
-// HIncrBy increments the number stored at field in the hash stored at key by increment.
-func (c *Client) HIncrBy(ctx context.Context, key, field string, incr int64) (err error) {
-	return c.conn.HIncrBy(ctx, key, field, incr).Err()
-}
-
-// HGetAll returns all fields and values of the hash stored at key and scans the result into dst variable.
-func (c *Client) HGetAll(ctx context.Context, key string, dst any) (err error) {
-	res := c.conn.HGetAll(ctx, key)
-	if err = res.Err(); err != nil {
-		return err
-	}
-
-	if len(res.Val()) == 0 {
-		return ErrKeyNotFound
-	}
-
-	return res.Scan(dst)
-}
-
-// HGet returns the value associated with field in the hash stored at key and scan the result into dst variable.
-func (c *Client) HGet(ctx context.Context, key, field string, dst any) (err error) {
-	if err = c.conn.HGet(ctx, key, field).Scan(dst); err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return ErrKeyNotFound
-		}
-		return err
-	}
-	return err
-}
-
-// HSet sets field in the hash stored at key to value and its expiration if expiration wasn't set before.
-func (c *Client) HSet(ctx context.Context, key, field string, value any, ttl time.Duration) (err error) {
-	pipe := c.conn.TxPipeline()
-
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Invalid, reflect.Pointer, reflect.Array, reflect.Map, reflect.Struct,
-		reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-		err = ErrInvalidFieldType
-		return err
-	default:
-	}
-
-	pipe.HSet(ctx, key, field, value)
-	pipe.Expire(ctx, key, ttl)
-
-	cmder, err := pipe.Exec(ctx)
+	redisOpts, err := options.failoverOptions()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	for _, cmd := range cmder {
-		if err = cmd.Err(); err != nil {
-			return err
-		}
-	}
-
-	return err
+	return newClient(rdb.NewFailoverClusterClient(redisOpts), options)
 }
 
-// HSetObject sets fields of data object in the hash stored at key to value.
-func (c *Client) HSetObject(ctx context.Context, key string, data any, ttl time.Duration) (err error) {
-	pipe := c.conn.TxPipeline()
+// NewRing creates a Redis Ring client for client-side sharding.
+func NewRing(opts ...Option) (*Client, error) {
+	options := newOptions(opts...)
 
-	t := reflect.TypeOf(data)
-	v := reflect.ValueOf(data)
-	for i := 0; i < t.NumField(); i++ {
-		tagValue, ok := t.Field(i).Tag.Lookup("redis")
-		if ok && tagValue != "-" {
-			switch v.Field(i).Kind() {
-			case reflect.Invalid, reflect.Pointer, reflect.Array, reflect.Map, reflect.Struct,
-				reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-				return ErrInvalidFieldType
-			default:
-			}
-			pipe.HSet(ctx, key, tagValue, v.Field(i).Interface())
-		}
-	}
-
-	pipe.Expire(ctx, key, ttl)
-
-	cmder, err := pipe.Exec(ctx)
+	redisOpts, err := options.ringOptions()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	for _, cmd := range cmder {
-		if err = cmd.Err(); err != nil {
-			return err
-		}
-	}
-
-	return err
+	return newClient(rdb.NewRing(redisOpts), options)
 }
 
-func (c *Client) Get(ctx context.Context, key string, dst any) (err error) {
-	if err = c.conn.Get(ctx, key).Scan(dst); err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return ErrKeyNotFound
-		}
-		return err
-	}
-	return err
+// Raw returns the underlying go-redis client.
+func (c *Client) Raw() rdb.UniversalClient {
+	return c.conn
 }
 
-// Set Redis `SET key value [expiration]` command.
-// Use for single items.
-func (c *Client) Set(ctx context.Context, key string, val interface{}, expiration time.Duration) (err error) {
-	res := c.conn.Set(ctx, key, val, expiration)
-	err = res.Err()
-	if err != nil {
-		return err
-	}
-	return err
+// Ping checks Redis availability.
+func (c *Client) Ping(ctx context.Context) error {
+	return c.conn.Ping(ctx).Err()
 }
 
-func (c *Client) SetStruct(ctx context.Context, key string, val interface{}, expiration time.Duration) (err error) {
-	b, err := c.marshaller(val)
-	if err != nil {
-		return err
-	}
-	res := c.conn.Set(ctx, key, b, expiration)
-	err = res.Err()
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-func (c *Client) Bool(ctx context.Context, key string) (val, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Bool()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Bytes(ctx context.Context, key string) (val []byte, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Bytes()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Float64(ctx context.Context, key string) (val float64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Float64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Int(ctx context.Context, key string) (val int, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Int()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Int64(ctx context.Context, key string) (val int64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Int64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Uint64(ctx context.Context, key string) (val uint64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Uint64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-// Get Redis `GET key` command. It returns string. Return error when key does not exist.
-func (c *Client) String(ctx context.Context, key string) (val string, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Result()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			err = nil
-			return val, ok, err
-		}
-		return val, ok, err
-	}
-	ok = true
-	return val, ok, err
-}
-
-func (c *Client) Incr(ctx context.Context, key string) (err error) {
-	res := c.conn.Incr(ctx, key)
-	err = res.Err()
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-func (c *Client) Decr(ctx context.Context, key string) (err error) {
-	res := c.conn.Decr(ctx, key)
-	err = res.Err()
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-func (c *Client) Delete(ctx context.Context, key string) (err error) {
-	res := c.conn.Del(ctx, key)
-	err = res.Err()
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-// MassDelete realise pipeline mass delete values by key slice.
-func (c *Client) MassDelete(ctx context.Context, keys []string) (err error) {
-	cmders, err := c.conn.Pipelined(ctx, func(pipe rdb.Pipeliner) error {
-		pipe.Del(ctx, keys...)
-		return nil
-	})
-
-	for _, cmder := range cmders {
-		err = cmder.Err()
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
+// Close closes the Redis client.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) getID() string {
-	if c.id == "" {
-		return GenerateUUID()
-	}
-	return c.id
-}
-
-func (c *Client) addMeterOption(opt redisotel.MetricsOption) {
-	c.meterOptions = append(c.meterOptions, opt)
-}
-
-func (c *Client) addTraceOption(opt redisotel.TracingOption) {
-	c.traceOptions = append(c.traceOptions, opt)
-}
-
-func (c *Client) exposeMetrics() {
-	if c.labels == nil {
-		c.labels = make(prometheus.Labels)
+func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
+	if err := applyTracing(conn, opts.traceOptions); err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
 
-	c.labels["client_id"] = c.getID()
+	return &Client{
+		conn:    conn,
+		codec:   opts.codec,
+		metrics: newClientMetrics(opts.metricLabels),
+	}, nil
 }
 
-func (c *Client) exposeInstrumenting() error {
-	err := redisotel.InstrumentTracing(c.conn, c.traceOptions...)
-	if err != nil {
-		return err
+func applyTracing(conn rdb.UniversalClient, traceOptions []redisotel.TracingOption) error {
+	if len(traceOptions) == 0 {
+		return nil
 	}
-	err = redisotel.InstrumentMetrics(c.conn, c.meterOptions...)
-	if err != nil {
-		return err
-	}
-	return nil
+
+	return redisotel.InstrumentTracing(conn, traceOptions...)
 }
