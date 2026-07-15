@@ -1,6 +1,6 @@
 <div align="center">
 
-# xredis
+# Redis toolkit for Go
 
 **Lightweight Redis wrapper for Go, built on top of [go-redis](https://github.com/redis/go-redis).**
 
