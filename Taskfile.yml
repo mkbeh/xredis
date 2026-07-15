@@ -91,7 +91,7 @@ tasks:
         done
 
   check-examples:
-    desc: "Check example modules against the local xredis checkout"
+    desc: "Check example modules against the local checkout"
     cmds:
       - |
         set -euo pipefail

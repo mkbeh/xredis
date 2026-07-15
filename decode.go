@@ -2,6 +2,14 @@ package xredis
 
 import "reflect"
 
+// decodeInto decodes a value of type T by passing an addressable destination
+// to decode.
+//
+// For a non-pointer T, decode receives *T. For a pointer T, decodeInto
+// allocates the pointed-to value and passes the resulting pointer to decode.
+// Defined pointer types are converted back to T after decoding.
+//
+// ErrInvalidEntry is returned if the decoded pointer cannot be represented as T.
 func decodeInto[T any](decode func(dst any) error) (T, error) {
 	var zero T
 

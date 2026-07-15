@@ -64,7 +64,7 @@ perform basic key-value operations with TTL support.
 ```go
 ctx := context.Background()
 
-// Initialize the xredis client
+// Initialize the client
 client, err := xredis.NewClient(
     xredis.WithClientConfig(&xredis.ClientConfig{
         Addr: "localhost:6379",
@@ -427,7 +427,7 @@ if err != nil {
 }
 
 // Create the object only if the Redis key does not exist.
-revision, created, err := store.Create(
+revision, created, err := store.SetIfAbsent(
 	ctx,
 	"42",
 	Order{
@@ -495,9 +495,9 @@ if !deleted {
 
 ### Expiration management
 
-`Create` and `CompareAndSwap` manage the expiration of the versioned object as follows:
+`SetIfAbsent` and `CompareAndSwap` manage the expiration of the versioned object as follows:
 
-| Value             | `Create`                     | `CompareAndSwap`                                             |
+| Value             | `SetIfAbsent`                     | `CompareAndSwap`                                             |
 | :---------------- | :--------------------------- | :----------------------------------------------------------- |
 | `xredis.KeepTTL`  | Returns `ErrInvalidTTL`      | Preserves the existing expiration                            |
 | `0`               | Creates a persistent key     | Removes the existing expiration and makes the key persistent |

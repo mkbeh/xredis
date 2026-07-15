@@ -259,14 +259,14 @@ func (s *VersionedStore[T]) Get(
 	}, true, nil
 }
 
-// Create stores a value only when the Redis key does not exist.
+// SetIfAbsent stores a value only when the Redis key does not exist.
 //
 // It returns created=false when the key already exists.
 //
 // expiration == 0 stores the value without expiration.
 // expiration > 0 stores the value with the given expiration.
 // Negative expiration values, including KeepTTL, return ErrInvalidTTL.
-func (s *VersionedStore[T]) Create(
+func (s *VersionedStore[T]) SetIfAbsent(
 	ctx context.Context,
 	key string,
 	value T,
@@ -287,7 +287,7 @@ func (s *VersionedStore[T]) Create(
 
 	revision = Revision(uuid.NewString())
 
-	created, err = s.create(
+	created, err = s.setIfAbsent(
 		ctx,
 		key,
 		data,
@@ -384,7 +384,7 @@ func (s *VersionedStore[T]) CompareAndDelete(
 	return result == 1, nil
 }
 
-func (s *VersionedStore[T]) create(
+func (s *VersionedStore[T]) setIfAbsent(
 	ctx context.Context,
 	key string,
 	data []byte,

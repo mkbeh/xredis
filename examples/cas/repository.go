@@ -69,7 +69,7 @@ func (r *orderRepository) Seed(
 		UpdatedAt: nowString(),
 	}
 
-	revision, created, err := r.store.Create(
+	revision, created, err := r.store.SetIfAbsent(
 		ctx,
 		id,
 		order,

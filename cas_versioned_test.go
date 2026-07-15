@@ -91,7 +91,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 1,
 			}
 
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				expected,
@@ -129,7 +129,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 1,
 			}
 
-			revision, created, err := pointerStore.Create(
+			revision, created, err := pointerStore.SetIfAbsent(
 				ctx,
 				key,
 				expected,
@@ -158,7 +158,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 1,
 			})
 
-			revision, created, err := pointerStore.Create(
+			revision, created, err := pointerStore.SetIfAbsent(
 				ctx,
 				key,
 				expected,
@@ -233,7 +233,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 1,
 			}
 
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				expected,
@@ -250,7 +250,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("creates a persistent value when expiration is zero", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42"},
@@ -277,7 +277,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 2,
 			}
 
-			originalRevision, created, err := store.Create(
+			originalRevision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				original,
@@ -290,7 +290,7 @@ var _ = Describe("VersionedStore", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(before).To(BeNumerically(">", 0))
 
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				replacement,
@@ -314,7 +314,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("rejects KeepTTL and other negative expirations", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42"},
@@ -324,7 +324,7 @@ var _ = Describe("VersionedStore", func() {
 			Expect(created).To(BeFalse())
 			Expect(revision).To(BeEmpty())
 
-			revision, created, err = store.Create(
+			revision, created, err = store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42"},
@@ -340,7 +340,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("rejects an empty key", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				"",
 				versionedOrder{},
@@ -355,7 +355,7 @@ var _ = Describe("VersionedStore", func() {
 
 	Describe("CompareAndSwap", func() {
 		It("updates a matching revision and applies a new expiration", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{
@@ -398,7 +398,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("preserves the existing expiration with KeepTTL", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42", Status: "processing"},
@@ -430,7 +430,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("removes the existing expiration when expiration is zero", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42", Status: "processing"},
@@ -462,7 +462,7 @@ var _ = Describe("VersionedStore", func() {
 				Version: 1,
 			}
 
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				original,
@@ -528,7 +528,7 @@ var _ = Describe("VersionedStore", func() {
 			Expect(swapped).To(BeFalse())
 			Expect(revision).To(BeEmpty())
 
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42"},
@@ -550,7 +550,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 
 		It("allows only one concurrent update for the same revision", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{
@@ -630,7 +630,7 @@ var _ = Describe("VersionedStore", func() {
 
 	Describe("CompareAndDelete", func() {
 		It("deletes a value only when the revision matches", func() {
-			revision, created, err := store.Create(
+			revision, created, err := store.SetIfAbsent(
 				ctx,
 				key,
 				versionedOrder{ID: "42", Status: "processing"},

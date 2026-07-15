@@ -214,7 +214,7 @@ Expected result:
 }
 ```
 
-Calling the same endpoint again returns `HTTP 409`, because `Create` does not
+Calling the same endpoint again returns `HTTP 409`, because `SetIfAbsent` does not
 overwrite an existing key.
 
 ## Read a versioned order

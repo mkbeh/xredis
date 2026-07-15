@@ -90,7 +90,12 @@ return 1
 //
 // It returns deleted=false when the key does not exist or contains a different value.
 func (c *Client) CompareAndDelete(ctx context.Context, key string, expected any) (deleted bool, err error) {
-	return c.compareAndDelete(ctx, key, expected)
+	result, err := compareAndDeleteScript.Run(ctx, c.conn, []string{key}, expected).Int64()
+	if err != nil {
+		return false, err
+	}
+
+	return result == 1, nil
 }
 
 // CompareAndSwap swaps value only when the current Redis string value equals
@@ -111,7 +116,23 @@ func (c *Client) CompareAndSwap(
 	value any,
 	expiration time.Duration,
 ) (swapped bool, err error) {
-	return c.compareAndSwap(ctx, key, expected, value, expiration)
+	if err := validateUpdateExpiration(expiration); err != nil {
+		return false, err
+	}
+
+	result, err := compareAndSwapScript.Run(
+		ctx,
+		c.conn,
+		[]string{key},
+		expected,
+		value,
+		expirationToMs(expiration),
+	).Int64()
+	if err != nil {
+		return false, err
+	}
+
+	return result == 1, nil
 }
 
 // HCompareAndDelete deletes a hash field only when its current value equals
@@ -168,41 +189,6 @@ func (c *Client) HCompareAndSwap(
 		field,
 		expected,
 		value,
-	).Int64()
-	if err != nil {
-		return false, err
-	}
-
-	return result == 1, nil
-}
-
-func (c *Client) compareAndDelete(ctx context.Context, key string, expected any) (deleted bool, err error) {
-	result, err := compareAndDeleteScript.Run(ctx, c.conn, []string{key}, expected).Int64()
-	if err != nil {
-		return false, err
-	}
-
-	return result == 1, nil
-}
-
-func (c *Client) compareAndSwap(
-	ctx context.Context,
-	key string,
-	expected any,
-	value any,
-	expiration time.Duration,
-) (swapped bool, err error) {
-	if err := validateUpdateExpiration(expiration); err != nil {
-		return false, err
-	}
-
-	result, err := compareAndSwapScript.Run(
-		ctx,
-		c.conn,
-		[]string{key},
-		expected,
-		value,
-		expirationToMs(expiration),
 	).Int64()
 	if err != nil {
 		return false, err
