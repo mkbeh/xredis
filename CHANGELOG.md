@@ -15,8 +15,10 @@ topology-aware operations, and OpenTelemetry observability.
   and struct-to-hash mapping.
 * **Typed cache-aside** — generic `Cache[T]` workflows with TTL jitter, negative caching, configurable not-found
   detection, custom negative markers, and singleflight deduplication for concurrent misses.
-* **Atomic compare operations** — Lua-backed compare-and-swap (CAS) and compare-and-delete (CAD) operations for raw and
-  codec-backed values.
+* **Atomic compare operations** — Lua-backed compare-and-swap (CAS) and compare-and-delete (CAD) operations for exact
+  Redis string values and individual hash fields.
+* **Versioned structured values** — generic `VersionedStore[T]` workflows with opaque revision tokens, atomic
+  initialization through `SetIfAbsent`, optimistic updates, conditional deletion, and configurable expiration.
 * **Distributed locks** — token-based lease locks with ownership-safe extension and unlock, together with fenced locks
   using monotonically increasing fencing tokens.
 * **Distributed rate limiting** — atomic fixed window, sliding window, and token bucket algorithms implemented with
