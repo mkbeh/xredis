@@ -701,11 +701,10 @@ err := client.SetMany(ctx, []xredis.SetItem{
 ```
 <!-- @formatter:on -->
 
-Available bulk helpers include:
 
-* `SetMany` and `SetStructMany`
-* `HSetMany`
-* `DeleteMany` and `UnlinkMany`
+
+`SetMany` and `SetStructMany` batch string-value writes, `HSetMany` batches hash writes, and `DeleteMany` and
+`UnlinkMany` batch key removal.
 
 > [!IMPORTANT]
 > For Redis Cluster and Ring clients, `DeleteMany` and `UnlinkMany` use pipelined single-key commands to avoid multi-key
@@ -776,7 +775,7 @@ client, err := xredis.NewClient(
 ```
 <!-- @formatter:on -->
 
-`InitObservability` enables native `go-redis` metrics through `redisotel-native` together with xredis wrapper-level
+`InitObservability` enables native `go-redis` metrics through `redisotel-native` together with `xredis` wrapper-level
 metrics.
 
 Native metric groups, command filters, histogram aggregation, and histogram buckets are configured through
