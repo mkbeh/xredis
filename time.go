@@ -30,26 +30,13 @@ func msToDuration(ms int64) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-func expirationToMs(expiration time.Duration) int64 {
-	if expiration == KeepTTL {
-		return -1
+func updateExpirationToMs(expiration time.Duration) (int64, error) {
+	switch {
+	case expiration == KeepTTL:
+		return -1, nil
+	case expiration >= 0:
+		return durationToMs(expiration), nil
+	default:
+		return 0, ErrInvalidTTL
 	}
-
-	return durationToMs(expiration)
-}
-
-func validateCreateExpiration(expiration time.Duration) error {
-	if expiration < 0 {
-		return ErrInvalidTTL
-	}
-
-	return nil
-}
-
-func validateUpdateExpiration(expiration time.Duration) error {
-	if expiration == KeepTTL || expiration >= 0 {
-		return nil
-	}
-
-	return ErrInvalidTTL
 }

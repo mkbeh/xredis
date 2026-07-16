@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0
+## v0.2.1
 
 Initial release of `xredis`, providing an opinionated `go-redis` wrapper with application-level reliability patterns,
 topology-aware operations, and OpenTelemetry observability.

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"net"
-	"reflect"
 	"time"
 
 	rdb "github.com/redis/go-redis/v9"
@@ -33,6 +31,19 @@ const (
 	// cacheNegative indicates that the key exists and represents a cached not-found result.
 	cacheNegative
 )
+
+func (s cacheState) metricResult() string {
+	switch s {
+	case cacheHit:
+		return cacheResultHit
+	case cacheMiss:
+		return cacheResultMiss
+	case cacheNegative:
+		return cacheResultNegativeHit
+	default:
+		return cacheResultError
+	}
+}
 
 // Loader loads a value when it is missing from cache.
 //
@@ -82,7 +93,7 @@ type cacheOptions struct {
 
 // NewCache creates a typed Redis cache.
 func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
-	if err := validateCacheType[T](); err != nil {
+	if err := validateConcreteType[T](); err != nil {
 		return nil, err
 	}
 
@@ -114,18 +125,9 @@ func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
 		negativeTTL:    options.negativeTTL,
 		negativeMarker: options.negativeMarker,
 		codec:          options.codec,
-		redisEncoded:   isRedisEncoded[T](),
+		redisEncoded:   isRawValueType[T](),
 		isNotFound:     options.isNotFound,
 	}, nil
-}
-
-func validateCacheType[T any]() error {
-	typ := reflect.TypeFor[T]()
-	if typ.Kind() == reflect.Interface {
-		return fmt.Errorf("%w: interface cache type %s is not supported", ErrInvalidCache, typ)
-	}
-
-	return nil
 }
 
 func validateCacheOptions(client *Client, opts cacheOptions) error {
@@ -235,7 +237,7 @@ func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		return zero, false, err
 	}
 
-	metricResult = cacheResultFromState(state)
+	metricResult = state.metricResult()
 
 	switch state {
 	case cacheHit:
@@ -284,7 +286,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 		return zero, err
 	}
 
-	metricResult = cacheResultFromState(state)
+	metricResult = state.metricResult()
 
 	switch state {
 	case cacheHit:
@@ -297,7 +299,6 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 		// proceed to singleflight loading
 
 	default:
-		metricResult = cacheResultError
 		return zero, ErrInvalidEntry
 	}
 
@@ -456,10 +457,12 @@ func (c *Cache[T]) encode(value T) (any, error) {
 
 func (c *Cache[T]) decode(cmd *rdb.StringCmd, data []byte) (T, error) {
 	if c.redisEncoded {
-		return scanCacheValue[T](cmd)
+		return decodeInto[T](cmd.Scan)
 	}
 
-	return decodeCacheValue[T](c.codec, data)
+	return decodeInto[T](func(dst any) error {
+		return c.codec.Unmarshal(data, dst)
+	})
 }
 
 func (c *Cache[T]) key(key string) string {
@@ -484,55 +487,4 @@ func normalizeCacheNotFound(err error) error {
 
 func defaultCacheIsNotFound(err error) bool {
 	return errors.Is(err, ErrKeyNotFound) || errors.Is(err, rdb.Nil)
-}
-
-func isRedisEncoded[T any]() bool {
-	var value T
-
-	switch any(value).(type) {
-	case string, *string,
-		[]byte,
-		int, *int,
-		int8, *int8,
-		int16, *int16,
-		int32, *int32,
-		int64, *int64,
-		uint, *uint,
-		uint8, *uint8,
-		uint16, *uint16,
-		uint32, *uint32,
-		uint64, *uint64,
-		float32, *float32,
-		float64, *float64,
-		bool, *bool,
-		time.Time, *time.Time,
-		time.Duration, *time.Duration,
-		net.IP:
-		return true
-	default:
-		return false
-	}
-}
-
-func scanCacheValue[T any](cmd *rdb.StringCmd) (T, error) {
-	return decodeInto[T](cmd.Scan)
-}
-
-func decodeCacheValue[T any](codec Codec, data []byte) (T, error) {
-	return decodeInto[T](func(dst any) error {
-		return codec.Unmarshal(data, dst)
-	})
-}
-
-func cacheResultFromState(state cacheState) string {
-	switch state {
-	case cacheHit:
-		return cacheResultHit
-	case cacheMiss:
-		return cacheResultMiss
-	case cacheNegative:
-		return cacheResultNegativeHit
-	default:
-		return cacheResultError
-	}
 }

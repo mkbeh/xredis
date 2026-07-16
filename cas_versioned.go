@@ -2,8 +2,6 @@ package xredis
 
 import (
 	"context"
-	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -151,7 +149,7 @@ func NewVersionedStore[T any](
 	client *Client,
 	opts ...VersionedStoreOption,
 ) (*VersionedStore[T], error) {
-	if err := validateVersionedStoreType[T](); err != nil {
+	if err := validateConcreteType[T](); err != nil {
 		return nil, err
 	}
 
@@ -169,8 +167,8 @@ func NewVersionedStore[T any](
 		}
 	}
 
-	if client == nil || client.conn == nil || options.codec == nil {
-		return nil, ErrInvalidVersionedStore
+	if err := validateVersionedStoreOptions(client, options); err != nil {
+		return nil, err
 	}
 
 	return &VersionedStore[T]{
@@ -178,6 +176,18 @@ func NewVersionedStore[T any](
 		prefix: options.prefix,
 		codec:  options.codec,
 	}, nil
+}
+
+func validateVersionedStoreOptions(client *Client, opts versionedStoreOptions) error {
+	if client == nil || client.conn == nil {
+		return ErrInvalidVersionedStore
+	}
+
+	if opts.codec == nil {
+		return ErrInvalidVersionedStore
+	}
+
+	return nil
 }
 
 // WithVersionedStorePrefix configures the Redis key prefix.
@@ -221,34 +231,18 @@ func (s *VersionedStore[T]) Get(
 		return zero, false, err
 	}
 
-	if len(result) != 2 {
-		return zero, false, ErrInvalidEntry
+	data, revision, ok, err := parseVersionedFields(result)
+	if err != nil {
+		return zero, false, err
 	}
 
-	valueRaw, revisionRaw := result[0], result[1]
-
-	if valueRaw == nil && revisionRaw == nil {
+	if !ok {
 		return zero, false, nil
 	}
 
-	if valueRaw == nil || revisionRaw == nil {
-		return zero, false, ErrInvalidEntry
-	}
-
-	data, ok := versionedStoreBytes(valueRaw)
-	if !ok {
-		return zero, false, ErrInvalidEntry
-	}
-
-	revision, ok := versionedStoreRevision(revisionRaw)
-	if !ok {
-		return zero, false, ErrInvalidEntry
-	}
-
-	value, err := decodeVersionedStoreValue[T](
-		s.codec,
-		data,
-	)
+	value, err := decodeInto[T](func(dst any) error {
+		return s.codec.Unmarshal(data, dst)
+	})
 	if err != nil {
 		return zero, false, err
 	}
@@ -276,8 +270,8 @@ func (s *VersionedStore[T]) SetIfAbsent(
 		return "", false, err
 	}
 
-	if err := validateCreateExpiration(expiration); err != nil {
-		return "", false, err
+	if expiration < 0 {
+		return "", false, ErrInvalidTTL
 	}
 
 	data, err := s.codec.Marshal(value)
@@ -287,13 +281,7 @@ func (s *VersionedStore[T]) SetIfAbsent(
 
 	revision = Revision(uuid.NewString())
 
-	created, err = s.setIfAbsent(
-		ctx,
-		key,
-		data,
-		revision,
-		expiration,
-	)
+	created, err = s.setIfAbsent(ctx, key, data, revision, expiration)
 	if err != nil {
 		return "", false, err
 	}
@@ -326,7 +314,8 @@ func (s *VersionedStore[T]) CompareAndSwap(
 		return "", false, err
 	}
 
-	if err = validateUpdateExpiration(expiration); err != nil {
+	exp, err := updateExpirationToMs(expiration)
+	if err != nil {
 		return "", false, err
 	}
 
@@ -344,7 +333,7 @@ func (s *VersionedStore[T]) CompareAndSwap(
 		string(expectedRevision),
 		data,
 		string(revision),
-		expirationToMs(expiration),
+		exp,
 	).Int64()
 	if err != nil {
 		return "", false, err
@@ -437,18 +426,34 @@ func (s *VersionedStore[T]) key(key string) string {
 	return s.prefix + key
 }
 
-func validateVersionedStoreType[T any]() error {
-	typ := reflect.TypeFor[T]()
-
-	if typ.Kind() == reflect.Interface {
-		return fmt.Errorf(
-			"%w: interface value type %s is not supported",
-			ErrInvalidVersionedStore,
-			typ,
-		)
+func parseVersionedFields(
+	result []any,
+) ([]byte, Revision, bool, error) {
+	if len(result) != 2 {
+		return nil, "", false, ErrInvalidEntry
 	}
 
-	return nil
+	valueRaw, revisionRaw := result[0], result[1]
+
+	switch {
+	case valueRaw == nil && revisionRaw == nil:
+		return nil, "", false, nil
+
+	case valueRaw == nil || revisionRaw == nil:
+		return nil, "", false, ErrInvalidEntry
+	}
+
+	data, ok := versionedStoreBytes(valueRaw)
+	if !ok {
+		return nil, "", false, ErrInvalidEntry
+	}
+
+	revision, ok := versionedStoreRevision(revisionRaw)
+	if !ok {
+		return nil, "", false, ErrInvalidEntry
+	}
+
+	return data, revision, true, nil
 }
 
 func versionedStoreBytes(value any) ([]byte, bool) {
@@ -483,13 +488,4 @@ func versionedStoreRevision(value any) (Revision, bool) {
 	default:
 		return "", false
 	}
-}
-
-func decodeVersionedStoreValue[T any](
-	codec Codec,
-	data []byte,
-) (T, error) {
-	return decodeInto[T](func(dst any) error {
-		return codec.Unmarshal(data, dst)
-	})
 }

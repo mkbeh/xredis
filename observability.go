@@ -51,12 +51,12 @@ const (
 
 // ObservabilityOption configures Redis client metrics instrumentation.
 type ObservabilityOption interface {
-	applyObservability(cfg *observabilityConfig)
+	apply(cfg *observabilityConfig)
 }
 
 type observabilityOptionFunc func(cfg *observabilityConfig)
 
-func (f observabilityOptionFunc) applyObservability(cfg *observabilityConfig) {
+func (f observabilityOptionFunc) apply(cfg *observabilityConfig) {
 	f(cfg)
 }
 
@@ -81,7 +81,7 @@ func InitObservability(opts ...ObservabilityOption) (func() error, error) {
 	cfg := defaultObservabilityConfig()
 	for _, opt := range opts {
 		if opt != nil {
-			opt.applyObservability(cfg)
+			opt.apply(cfg)
 		}
 	}
 

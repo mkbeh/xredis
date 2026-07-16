@@ -50,4 +50,8 @@ var (
 
 	// ErrInvalidEntry is returned when a stored Redis entry has an invalid internal representation.
 	ErrInvalidEntry = errors.New("invalid entry")
+
+	// ErrUnsupportedType is returned when a typed component is created with an
+	// unsupported value type.
+	ErrUnsupportedType = errors.New("unsupported type")
 )

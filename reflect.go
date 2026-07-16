@@ -1,6 +1,19 @@
 package xredis
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+)
+
+func validateConcreteType[T any]() error {
+	typ := reflect.TypeFor[T]()
+
+	if typ.Kind() == reflect.Interface {
+		return fmt.Errorf("%w: interface value type %s is not supported", ErrUnsupportedType, typ)
+	}
+
+	return nil
+}
 
 // decodeInto decodes a value of type T by passing an addressable destination
 // to decode.
