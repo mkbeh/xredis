@@ -2,7 +2,7 @@ module cas
 
 go 1.26
 
-require github.com/mkbeh/xredis v0.2.0
+require github.com/mkbeh/xredis v0.2.1
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

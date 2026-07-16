@@ -25,8 +25,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 h1:5VipnvEpbqr2gA2VbM+nYVbkIF2
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDec4pTvgMSEixRuQKPTMH2bNs=
 github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2skhE=
 github.com/klauspost/cpuid/v2 v2.2.10/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
-github.com/mkbeh/xredis v0.2.0 h1:hMwH+lsZWWPDg9J5SnyucdukyMoJhPd4l24jiWs9VcY=
-github.com/mkbeh/xredis v0.2.0/go.mod h1:VtTtF0fE8n4Ds4LNRlUiH6wJZj95hoKddVMlAEjZCmQ=
+github.com/mkbeh/xredis v0.2.1 h1:VgCn21H2aygED8dIs6sAFAPnIkyQ94zPNrrbmJBFpO4=
+github.com/mkbeh/xredis v0.2.1/go.mod h1:VtTtF0fE8n4Ds4LNRlUiH6wJZj95hoKddVMlAEjZCmQ=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/redis/go-redis/extra/rediscmd/v9 v9.21.0 h1:jsV3tyMeJrEoc2f3EhNf7qoBW3NEZW7l/4ziT3M+OJI=

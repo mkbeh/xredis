@@ -3,7 +3,7 @@ module commands
 go 1.26
 
 require (
-	github.com/mkbeh/xredis v0.2.0
+	github.com/mkbeh/xredis v0.2.1
 	github.com/prometheus/client_golang v1.23.2
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/prometheus v0.66.0
