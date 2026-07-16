@@ -3,7 +3,7 @@ module scan
 go 1.26
 
 require (
-	github.com/mkbeh/xredis v0.2.0
+	github.com/mkbeh/xredis v0.2.1
 	github.com/redis/go-redis/v9 v9.21.0
 )
 
