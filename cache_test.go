@@ -65,9 +65,9 @@ var _ = Describe("Cache", func() {
 			)
 
 			Expect(cache).To(BeNil())
-			Expect(errors.Is(err, xredis.ErrInvalidCache)).To(BeTrue())
+			Expect(errors.Is(err, xredis.ErrUnsupportedType)).To(BeTrue())
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("interface cache type"))
+			Expect(err.Error()).To(ContainSubstring("interface value type"))
 		})
 	})
 

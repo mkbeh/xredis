@@ -69,7 +69,7 @@ var _ = Describe("VersionedStore", func() {
 			)
 
 			Expect(versionedStore).To(BeNil())
-			Expect(errors.Is(err, xredis.ErrInvalidVersionedStore)).To(BeTrue())
+			Expect(errors.Is(err, xredis.ErrUnsupportedType)).To(BeTrue())
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("interface value type"))
 		})

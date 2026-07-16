@@ -81,6 +81,10 @@ func BenchmarkDecodeCacheValue(b *testing.B) {
 	codec := JSONCodec{}
 	data := []byte(`{"id":"42","name":"Ada","active":true}`)
 
+	valueCache := &Cache[benchmarkCacheUser]{codec: codec}
+	pointerCache := &Cache[*benchmarkCacheUser]{codec: codec}
+	namedPointerCache := &Cache[benchmarkCacheUserPointer]{codec: codec}
+
 	b.Run("value/direct", func(b *testing.B) {
 		b.ReportAllocs()
 
@@ -114,10 +118,7 @@ func BenchmarkDecodeCacheValue(b *testing.B) {
 		b.ReportAllocs()
 
 		for b.Loop() {
-			value, err := decodeCacheValue[benchmarkCacheUser](
-				codec,
-				data,
-			)
+			value, err := valueCache.decode(nil, data)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -159,10 +160,7 @@ func BenchmarkDecodeCacheValue(b *testing.B) {
 		b.ReportAllocs()
 
 		for b.Loop() {
-			value, err := decodeCacheValue[*benchmarkCacheUser](
-				codec,
-				data,
-			)
+			value, err := pointerCache.decode(nil, data)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -204,10 +202,7 @@ func BenchmarkDecodeCacheValue(b *testing.B) {
 		b.ReportAllocs()
 
 		for b.Loop() {
-			value, err := decodeCacheValue[benchmarkCacheUserPointer](
-				codec,
-				data,
-			)
+			value, err := namedPointerCache.decode(nil, data)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -220,6 +215,9 @@ func BenchmarkDecodeCacheValue(b *testing.B) {
 func BenchmarkDecodeCacheValueParallel(b *testing.B) {
 	codec := JSONCodec{}
 	data := []byte(`{"id":"42","name":"Ada","active":true}`)
+
+	valueCache := &Cache[benchmarkCacheUser]{codec: codec}
+	pointerCache := &Cache[*benchmarkCacheUser]{codec: codec}
 
 	b.Run("value/direct", func(b *testing.B) {
 		b.ReportAllocs()
@@ -269,10 +267,7 @@ func BenchmarkDecodeCacheValueParallel(b *testing.B) {
 			var value benchmarkCacheUser
 
 			for pb.Next() {
-				decoded, err := decodeCacheValue[benchmarkCacheUser](
-					codec,
-					data,
-				)
+				decoded, err := valueCache.decode(nil, data)
 				if err != nil {
 					panic(err)
 				}
@@ -332,10 +327,7 @@ func BenchmarkDecodeCacheValueParallel(b *testing.B) {
 			var value *benchmarkCacheUser
 
 			for pb.Next() {
-				decoded, err := decodeCacheValue[*benchmarkCacheUser](
-					codec,
-					data,
-				)
+				decoded, err := pointerCache.decode(nil, data)
 				if err != nil {
 					panic(err)
 				}

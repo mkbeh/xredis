@@ -154,17 +154,19 @@ The following example initializes a Redis Cluster client with a set of startup n
 
 <!-- @formatter:off -->
 ```go
-cluster, err := xredis.NewClusterClient(
-    xredis.WithClusterConfig(&xredis.ClusterConfig{
-        Addrs: []string{
-            "localhost:7000",
-            "localhost:7001",
-            "localhost:7002",
-        },
-    }),
+config := &xredis.ClusterConfig{
+    Addrs: []string{
+        "localhost:7000",
+        "localhost:7001",
+        "localhost:7002",
+    },
+}
+
+client, err := xredis.NewClusterClient(
+    xredis.WithClusterConfig(config),
 )
 if err != nil {
-    return err
+    log.Fatalf("create Redis Cluster client: %v", err)
 }
 ```
 <!-- @formatter:on -->
@@ -180,10 +182,20 @@ Supported scalar types are passed directly to `go-redis` for native encoding and
 <!-- @formatter:off -->
 ```go
 if err := client.Set(ctx, "counter", 42, time.Minute); err != nil {
-    return err
+    log.Fatalf("set counter: %v", err)
 }
 
 counter, ok, err := client.Int64(ctx, "counter")
+if err != nil {
+    log.Fatalf("get counter: %v", err)
+}
+
+if !ok {
+    log.Println("counter not found")
+    return
+}
+
+fmt.Printf("Counter: %d\n", counter)
 ```
 <!-- @formatter:on -->
 
@@ -198,25 +210,32 @@ Structured values are encoded through the client-level `Codec`. JSON is used by 
 <!-- @formatter:off -->
 ```go
 type User struct {
-    ID   string `json:"id"`
-    Name string `json:"name"`
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 
-if err := client.SetStruct(
-    ctx,
-    "user:42",
-    User{
-        ID:   "42",
-        Name: "Ada",
-    },
-    time.Hour,
-); err != nil {
-    return err
+// Save a structured object
+user := User{ID: "42", Name: "Ada Lovelace", Email: "ada@example.com"}
+
+if err := client.SetStruct(ctx, "user:42", user, 24*time.Hour); err != nil {
+    log.Fatalf("store user: %v", err)
 }
 
-var user User
+// Retrieve the object back
+var loadedUser User
 
-ok, err := client.GetStruct(ctx, "user:42", &user)
+ok, err := client.GetStruct(ctx, "user:42", &loadedUser)
+if err != nil {
+    log.Fatalf("get user: %v", err)
+}
+
+if !ok {
+    log.Println("user not found")
+    return
+}
+
+fmt.Printf("Loaded %s <%s>\n", loadedUser.Name, loadedUser.Email)
 ```
 <!-- @formatter:on -->
 
@@ -249,21 +268,27 @@ type UserHash struct {
     Active bool   `redis:"active"`
 }
 
-if err := client.HSet(
-    ctx,
-    "user:42",
-    time.Hour,
-    UserHash{
-        Name:   "Grace",
-        Active: true,
-    },
-); err != nil {
-    return err
+user := UserHash{Name: "Grace Hopper", Active: true}
+
+// Store the struct as a Redis hash with a TTL.
+if err := client.HSet(ctx, "user:42", time.Hour, user); err != nil {
+    log.Fatalf("set user hash: %v", err)
 }
 
-var user UserHash
+var loadedUser UserHash
 
-ok, err := client.HGetAll(ctx, "user:42", &user)
+// Read the hash fields back into a struct.
+ok, err := client.HGetAll(ctx, "user:42", &loadedUser)
+if err != nil {
+    log.Fatalf("get user hash: %v", err)
+}
+
+if !ok {
+    log.Println("user hash not found")
+    return
+}
+
+fmt.Printf("Loaded %s (active: %t)\n", loadedUser.Name, loadedUser.Active)
 ```
 <!-- @formatter:on -->
 
@@ -274,20 +299,28 @@ concurrent misses.
 
 <!-- @formatter:off -->
 ```go
+// Create a typed cache for User values.
 cache, err := xredis.NewCache[User](
     client,
     xredis.WithCachePrefix("cache:user:"),
-    xredis.WithCacheTTL(time.Minute),
-    xredis.WithCacheJitter(5*time.Second),
+    xredis.WithCacheTTL(10*time.Minute),
+    xredis.WithCacheJitter(15*time.Second),
     xredis.WithCacheNegativeTTL(30*time.Second),
 )
 if err != nil {
-    return err
+    log.Fatalf("create user cache: %v", err)
 }
 
+// Read the user from Redis or load it from the database on a cache miss.
+// Concurrent misses for the same key share one in-flight loader execution.
 user, err := cache.GetOrLoad(ctx, "42", func(ctx context.Context) (User, error) {
-    return repository.GetUser(ctx, "42")
+    return db.FetchUserByID(ctx, "42")
 })
+if err != nil {
+    log.Fatalf("get user: %v", err)
+}
+
+fmt.Printf("Loaded user: %s\n", user.Name)
 ```
 <!-- @formatter:on -->
 
@@ -352,7 +385,7 @@ if !swapped {
     return errors.New("status changed concurrently")
 }
 
-// Delete the key only if its current value is "completed".
+// Delete the key only if its current value is still "completed".
 deleted, err := client.CompareAndDelete(
     ctx,
     "order:42:status",
@@ -377,6 +410,7 @@ if !deleted {
 
 <!-- @formatter:off -->
 ```go
+// Update the "status" field only if it is still "processing".
 swapped, err := client.HCompareAndSwap(
     ctx,
     "order:42",
@@ -389,6 +423,20 @@ if err != nil {
 }
 if !swapped {
     return errors.New("status changed concurrently")
+}
+
+// Delete the "status" field only if it is still "completed".
+deleted, err := client.HCompareAndDelete(
+    ctx,
+    "order:42",
+    "status",
+    "completed",
+)
+if err != nil {
+    return err
+}
+if !deleted {
+    return errors.New("status changed before deletion")
 }
 ```
 <!-- @formatter:on -->
@@ -520,39 +568,38 @@ another client.
 
 <!-- @formatter:off -->
 ```go
-lock, acquired, err := client.TryLock(
-    ctx,
-    "lock:order:42",
-    30*time.Second,
-)
+// Acquire a 30-second lease for the order.
+lock, acquired, err := client.TryLock(ctx, "lock:order:42", 30*time.Second)
 if err != nil {
-    return err
+    return fmt.Errorf("acquire order lock: %w", err)
 }
 if !acquired {
-    return errors.New("lock is already held")
+    return errors.New("order is already being processed")
 }
 
+// Release the lock using an independent timeout context.
 defer func() {
-    unlockCtx, cancel := context.WithTimeout(
-        context.Background(),
-        5*time.Second,
-    )
+    unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
     if err := lock.Unlock(unlockCtx); err != nil &&
         !errors.Is(err, xredis.ErrLockNotOwned) {
-        log.Println("unable to unlock:", err)
+        log.Printf("release order lock: %v", err)
     }
 }()
 
-// Extend the lease when the protected operation needs more time.
+// Perform work protected by the lease.
+
+// Extend the lease before it expires if more time is needed.
 extended, err := lock.Extend(ctx, 30*time.Second)
 if err != nil {
-    return err
+    return fmt.Errorf("extend order lock: %w", err)
 }
 if !extended {
-    return xredis.ErrLockNotOwned
+    return errors.New("lock lease expired or ownership changed")
 }
+
+// Continue the protected operation.
 ```
 <!-- @formatter:on -->
 
@@ -566,6 +613,7 @@ continue operating after their lease has expired, for example after a long pause
 
 <!-- @formatter:off -->
 ```go
+// Acquire a 30-second fenced lease for the order.
 lock, acquired, err := client.TryFencedLock(
     ctx,
     "lock:{order:42}",
@@ -573,21 +621,26 @@ lock, acquired, err := client.TryFencedLock(
     30*time.Second,
 )
 if err != nil {
-    return err
+    return fmt.Errorf("acquire fenced lock: %w", err)
 }
 if !acquired {
-    return errors.New("lock is already held")
+    return errors.New("order is already being processed")
 }
 
+// Release the lease using an independent timeout context.
 defer func() {
-    if err := lock.Unlock(context.Background()); err != nil &&
+    unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    if err := lock.Unlock(unlockCtx); err != nil &&
         !errors.Is(err, xredis.ErrLockNotOwned) {
-        log.Println("unable to unlock fenced lock:", err)
+        log.Printf("release fenced lock: %v", err)
     }
 }()
 
-// Pass the token to the protected resource with every write.
-fencingToken := lock.FencingToken()
+// Include the fencing token in every protected write.
+// The downstream storage must reject writes with an older token.
+token := lock.FencingToken()
 ```
 <!-- @formatter:on -->
 
@@ -611,39 +664,18 @@ independently for each request.
 
 <!-- @formatter:off -->
 ```go
+// Create a rate limiter with a shared Redis key prefix.
 limiter, err := client.RateLimiter(
     xredis.WithRateLimiterPrefix("rate_limit:"),
 )
 if err != nil {
-    return err
+    return fmt.Errorf("create rate limiter: %w", err)
 }
 
-// Fixed window: allow up to 100 requests per minute.
-decision, err := limiter.AllowFixedWindow(
+// Allow 10 requests per second with a burst capacity of 20.
+decision, err := limiter.AllowTokenBucket(
     ctx,
-    "fixed:user:42",
-    xredis.RateLimit{
-        Limit:  100,
-        Window: time.Minute,
-    },
-)
-if err != nil {
-    return err
-}
-
-if !decision.Allowed {
-    log.Printf(
-        "rate limit exceeded; retry after %v",
-        decision.RetryAfter,
-    )
-
-    return errors.New("too many requests")
-}
-
-// Token bucket: refill 10 tokens per second and allow bursts up to 20 requests.
-bucketDecision, err := limiter.AllowTokenBucket(
-    ctx,
-    "token:user:42",
+    "user:42:api",
     xredis.TokenBucketRateLimit{
         Limit:  10,
         Window: time.Second,
@@ -651,12 +683,17 @@ bucketDecision, err := limiter.AllowTokenBucket(
     },
 )
 if err != nil {
-    return err
+    return fmt.Errorf("check rate limit: %w", err)
 }
 
-if !bucketDecision.Allowed {
-    return errors.New("too many requests")
+if !decision.Allowed {
+    return fmt.Errorf(
+        "rate limit exceeded; retry after %s",
+        decision.RetryAfter,
+    )
 }
+
+// Continue processing the request.
 ```
 <!-- @formatter:on -->
 
@@ -686,22 +723,24 @@ Pipeline helpers execute independent single-key commands in batches:
 
 <!-- @formatter:off -->
 ```go
+// Store multiple values in a single pipeline execution.
 err := client.SetMany(ctx, []xredis.SetItem{
     {
-        Key:        "message:1",
-        Value:      "hello",
-        Expiration: time.Minute,
+        Key:        "session:101",
+        Value:      "user:42",
+        Expiration: time.Hour,
     },
     {
-        Key:        "message:2",
-        Value:      "world",
-        Expiration: time.Minute,
+        Key:        "session:102",
+        Value:      true,
+        Expiration: 30 * time.Minute,
     },
 })
+if err != nil {
+    return fmt.Errorf("store sessions: %w", err)
+}
 ```
 <!-- @formatter:on -->
-
-
 
 `SetMany` and `SetStructMany` batch string-value writes, `HSetMany` batches hash writes, and `DeleteMany` and
 `UnlinkMany` batch key removal.
@@ -716,6 +755,7 @@ Topology-wide scan helpers coordinate iteration across Redis nodes and support b
 
 <!-- @formatter:off -->
 ```go
+// Process matching keys in batches across all topology nodes.
 err := client.ScanEachBatch(
     ctx,
     xredis.ScanOptions{
@@ -723,9 +763,12 @@ err := client.ScanEachBatch(
         Count: 500,
     },
     func(ctx context.Context, keys []string) error {
-        return client.UnlinkMany(ctx, keys)
+        return processCacheKeys(ctx, keys)
     },
 )
+if err != nil {
+    return fmt.Errorf("scan user cache keys: %w", err)
+}
 ```
 <!-- @formatter:on -->
 
@@ -737,13 +780,12 @@ Available scan helpers include:
 * `ScanEachBatch` — invokes a handler for each page.
 * `ScanDelete` and `ScanUnlink` — remove matching keys.
 
-#### Scan behavior
-
-* **Topology-wide execution** — Redis Cluster scans run on each master node. Redis Ring scans run on each live shard.
-* **Concurrency** — handlers may be invoked concurrently by different node scans. Shared state must be synchronized.
-* **Idempotency** — Redis `SCAN` may return duplicate keys, especially while the keyspace is changing. Handlers should
-  be idempotent.
-* **Consistency** — `SCAN` is incremental and does not provide a point-in-time snapshot of the keyspace.
+> [!NOTE]
+> Redis `SCAN` provides weakly consistent iteration. Keys may be added, removed, or returned more than once while a scan
+> is in progress. Handlers should therefore be idempotent.
+>
+> `Count` is a work-size hint to Redis, not a guaranteed batch size. Topology-wide scan and removal operations are not
+> atomic.
 
 ## Observability
 
@@ -756,22 +798,30 @@ shutdown:
 
 <!-- @formatter:off -->
 ```go
-shutdownObservability, err := xredis.InitObservability(
+// Initialize global Redis metrics instrumentation.
+shutdownMetrics, err := xredis.InitObservability(
     xredis.WithMeterProvider(meterProvider),
 )
 if err != nil {
-    return err
+    log.Fatalf("initialize Redis metrics: %v", err)
 }
+
 defer func() {
-    if err := shutdownObservability(); err != nil {
-        log.Println("unable to shutdown Redis observability:", err)
+    if err := shutdownMetrics(); err != nil {
+        log.Printf("shutdown Redis metrics: %v", err)
     }
 }()
 
+// Create a client with service-level metric labels.
 client, err := xredis.NewClient(
-    xredis.WithClientConfig(cfg),
-    xredis.WithMetricLabel("application", "orders-api"),
+    xredis.WithAddr("localhost:6379"),
+    xredis.WithMetricLabel("service", "orders-api"),
+    xredis.WithMetricLabel("environment", "production"),
 )
+if err != nil {
+    log.Fatalf("create Redis client: %v", err)
+}
+defer client.Close()
 ```
 <!-- @formatter:on -->
 
