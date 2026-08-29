@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/mkbeh/xredis v0.3.0
+	github.com/mkbeh/xredis v0.4.0
 )
 
 require (
