@@ -233,7 +233,7 @@ var _ = Describe("CAS and CAD", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(before).To(BeNumerically(">", 0))
 
-			swapped, err := client.HCompareAndSwap(
+			swapped, err := client.HFieldCompareAndSwap(
 				ctx,
 				"order:42",
 				"status",
@@ -268,7 +268,7 @@ var _ = Describe("CAS and CAD", func() {
 				"cancelled",
 			)).To(Succeed())
 
-			swapped, err := client.HCompareAndSwap(
+			swapped, err := client.HFieldCompareAndSwap(
 				ctx,
 				"order:42",
 				"status",
@@ -289,7 +289,7 @@ var _ = Describe("CAS and CAD", func() {
 		})
 
 		It("returns false when the hash or field does not exist", func() {
-			swapped, err := client.HCompareAndSwap(
+			swapped, err := client.HFieldCompareAndSwap(
 				ctx,
 				"missing",
 				"status",
@@ -299,7 +299,7 @@ var _ = Describe("CAS and CAD", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(swapped).To(BeFalse())
 
-			deleted, err := client.HCompareAndDelete(
+			deleted, err := client.HFieldCompareAndDelete(
 				ctx,
 				"missing",
 				"status",
@@ -316,7 +316,7 @@ var _ = Describe("CAS and CAD", func() {
 				1,
 			)).To(Succeed())
 
-			swapped, err = client.HCompareAndSwap(
+			swapped, err = client.HFieldCompareAndSwap(
 				ctx,
 				"order:42",
 				"status",
@@ -326,7 +326,7 @@ var _ = Describe("CAS and CAD", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(swapped).To(BeFalse())
 
-			deleted, err = client.HCompareAndDelete(
+			deleted, err = client.HFieldCompareAndDelete(
 				ctx,
 				"order:42",
 				"status",
@@ -347,7 +347,7 @@ var _ = Describe("CAS and CAD", func() {
 				1,
 			)).To(Succeed())
 
-			deleted, err := client.HCompareAndDelete(
+			deleted, err := client.HFieldCompareAndDelete(
 				ctx,
 				"order:42",
 				"status",
@@ -356,7 +356,7 @@ var _ = Describe("CAS and CAD", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(deleted).To(BeFalse())
 
-			deleted, err = client.HCompareAndDelete(
+			deleted, err = client.HFieldCompareAndDelete(
 				ctx,
 				"order:42",
 				"status",
@@ -392,7 +392,7 @@ var _ = Describe("CAS and CAD", func() {
 				"processing",
 			)).To(Succeed())
 
-			deleted, err := client.HCompareAndDelete(
+			deleted, err := client.HFieldCompareAndDelete(
 				ctx,
 				"order:42",
 				"status",

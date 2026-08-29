@@ -44,17 +44,11 @@ func decodeInto[T any](decode func(dst any) error) (T, error) {
 		return zero, err
 	}
 
-	// reflect.New returns PointerTo(typ.Elem()), which may differ from T when
-	// T is a defined pointer type.
 	if value.Type() != typ {
-		if !value.CanConvert(typ) {
-			return zero, ErrInvalidEntry
-		}
-
 		value = value.Convert(typ)
 	}
 
-	decoded, ok := value.Interface().(T)
+	decoded, ok := reflect.TypeAssert[T](value)
 	if !ok {
 		return zero, ErrInvalidEntry
 	}
