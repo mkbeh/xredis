@@ -17,26 +17,26 @@ vars:
     sh: |
       {
         printf '.\n'
-        find ./examples -name go.mod -type f -print |
+        find ./examples -type f -name go.mod -not -path '*/vendor/*' -print |
           while IFS= read -r mod; do
             dirname "$mod"
           done
       } | sort -u
 
 env:
+  GOTOOLCHAIN: "local"
   # Resolve example imports against the current root checkout.
   GOWORK: "{{.ROOT_DIR}}/go.work"
 
 tasks:
   init-workspace:
     desc: "Initialize or reset the local Go workspace"
+    run: once
     cmds:
       - bash .github/scripts/create-go-workspace.sh
 
   run:
     desc: "Run all project checks"
-    deps:
-      - init-workspace
     cmds:
       - task: verify
       - task: lint
@@ -55,11 +55,21 @@ tasks:
         vars:
           WORK_DIR: "{{.ITEM}}"
 
+  tidy-root:
+    desc: "Tidy the root module"
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - GOWORK=off go mod tidy -v
+
   verify:
     desc: "Verify module files and compile all modules"
     deps:
       - init-workspace
     cmds:
+      # Keep the root module strictly tidy in Wave 1 without forcing example
+      # go.mod/go.sum files to change before the root module is released.
+      - task: _verify-root-tidy
+
       - for: { var: MODULE_DIRS }
         task: _verify-module
         vars:
@@ -97,11 +107,10 @@ tasks:
 
   coverage:
     desc: "Run root tests and print total coverage"
-    deps:
-      - init-workspace
+    dir: "{{.ROOT_DIR}}"
     cmds:
       - |
-        go test \
+        GOWORK=off go test \
           -mod=readonly \
           -shuffle=on \
           -count=1 \
@@ -109,14 +118,14 @@ tasks:
           -coverpkg=./... \
           -coverprofile=coverage.out \
           ./...
-      - go tool cover -func=coverage.out | grep total
+      - GOWORK=off go tool cover -func=coverage.out | grep total
 
   coverage:html:
     desc: "Generate HTML coverage report"
     deps:
       - coverage
     cmds:
-      - go tool cover -html=coverage.out -o coverage.html
+      - GOWORK=off go tool cover -html=coverage.out -o coverage.html
 
   bench-cache-all:
     desc: "Run all cache value decoding benchmarks"
@@ -163,6 +172,12 @@ tasks:
       - echo "==> {{.WORK_DIR}}"
       - GOWORK=off go mod tidy -v
 
+  _verify-root-tidy:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - GOWORK=off go mod tidy -diff
+
   _verify-module:
     internal: true
     requires:
@@ -171,7 +186,6 @@ tasks:
     dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
       - echo "==> {{.WORK_DIR}}"
-      - GOWORK=off go mod tidy -diff
       - GOWORK=off go mod verify
       - go vet -mod=readonly ./...
       - go test -mod=readonly -run='^$' ./...
@@ -214,6 +228,7 @@ tasks:
         -e GOMODCACHE=/go/pkg/mod
         -e GOCACHE=/go/build-cache
         -e GOLANGCI_LINT_CACHE=/go/build-cache/golangci-lint
+        -e GOTOOLCHAIN=local
         -e GOWORK=/app/go.work
         -w {{.WORK_DIR}}
         golangci/golangci-lint:{{.LINTER_VER}}

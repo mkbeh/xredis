@@ -93,6 +93,15 @@ type cacheOptions struct {
 
 // NewCache creates a typed Redis cache.
 func NewCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
+	return newCache[T](client, opts...)
+}
+
+// Cache creates a typed Redis cache bound to this client.
+func (c *Client) Cache[T any](opts ...CacheOption) (*Cache[T], error) {
+	return newCache[T](c, opts...)
+}
+
+func newCache[T any](client *Client, opts ...CacheOption) (*Cache[T], error) {
 	if err := validateConcreteType[T](); err != nil {
 		return nil, err
 	}

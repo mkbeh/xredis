@@ -145,10 +145,16 @@ type versionedStoreOptions struct {
 //
 // The client Codec is used by default. If the client does not provide one,
 // JSONCodec is used.
-func NewVersionedStore[T any](
-	client *Client,
-	opts ...VersionedStoreOption,
-) (*VersionedStore[T], error) {
+func NewVersionedStore[T any](client *Client, opts ...VersionedStoreOption) (*VersionedStore[T], error) {
+	return newVersionedStore[T](client, opts...)
+}
+
+// VersionedStore creates a typed versioned value store bound to this client.
+func (c *Client) VersionedStore[T any](opts ...VersionedStoreOption) (*VersionedStore[T], error) {
+	return newVersionedStore[T](c, opts...)
+}
+
+func newVersionedStore[T any](client *Client, opts ...VersionedStoreOption) (*VersionedStore[T], error) {
 	if err := validateConcreteType[T](); err != nil {
 		return nil, err
 	}
