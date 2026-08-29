@@ -18,6 +18,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   govulncheck:
     name: govulncheck

@@ -1,43 +1,122 @@
 version: "3"
 
 vars:
-  LINTER_VER: "v2.12.2"
+  LINTER_VER: "v2.13.2"
+
   GOMODCACHE:
     sh: go env GOMODCACHE
+
   GOCACHE:
     sh: go env GOCACHE
-  PWD_DIR:
-    sh: pwd
+
+  GOSUMCACHE:
+    sh: echo "$(go env GOPATH)/pkg/sumdb"
+
+  # Root module + all standalone example modules.
+  MODULE_DIRS:
+    sh: |
+      {
+        printf '.\n'
+        find ./examples -name go.mod -type f -print |
+          while IFS= read -r mod; do
+            dirname "$mod"
+          done
+      } | sort -u
 
 env:
-  GOWORK: "off"
+  # Resolve example imports against the current root checkout.
+  GOWORK: "{{.ROOT_DIR}}/go.work"
 
 tasks:
-  run:
-    desc: "Full cycle"
+  init-workspace:
+    desc: "Initialize or reset the local Go workspace"
     cmds:
-      - task: vendor-root
-      - task: lint-root
-      - task: test-root
+      - bash .github/scripts/create-go-workspace.sh
+
+  run:
+    desc: "Run all project checks"
+    deps:
+      - init-workspace
+    cmds:
+      - task: verify
+      - task: lint
+      - task: test-race
 
   before-commit:
-    desc: "Tidy example modules and run all checks"
+    desc: "Run all pre-commit checks"
     cmds:
-      - task: tidy-examples
-      - task: check-examples
       - task: run
 
-  lint:
-    desc: "Lint root module"
+  tidy:
+    desc: "Tidy all modules"
     cmds:
-      - task: vendor-root
-      - task: lint-root
+      - for: { var: MODULE_DIRS }
+        task: _tidy-module
+        vars:
+          WORK_DIR: "{{.ITEM}}"
+
+  verify:
+    desc: "Verify module files and compile all modules"
+    deps:
+      - init-workspace
+    cmds:
+      - for: { var: MODULE_DIRS }
+        task: _verify-module
+        vars:
+          WORK_DIR: "{{.ITEM}}"
+
+  lint:
+    desc: "Lint all modules"
+    deps:
+      - init-workspace
+    cmds:
+      - for: { var: MODULE_DIRS }
+        task: _run-linter
+        vars:
+          WORK_DIR: "/app/{{.ITEM}}"
 
   test:
-    desc: "Test root module"
+    desc: "Run tests for all modules"
+    deps:
+      - init-workspace
     cmds:
-      - task: vendor-root
-      - task: test-root
+      - for: { var: MODULE_DIRS }
+        task: _run-tests
+        vars:
+          WORK_DIR: "{{.ITEM}}"
+
+  test-race:
+    desc: "Run tests with the race detector for all modules"
+    deps:
+      - init-workspace
+    cmds:
+      - for: { var: MODULE_DIRS }
+        task: _run-race-tests
+        vars:
+          WORK_DIR: "{{.ITEM}}"
+
+  coverage:
+    desc: "Run root tests and print total coverage"
+    deps:
+      - init-workspace
+    cmds:
+      - |
+        go test \
+          -mod=readonly \
+          -shuffle=on \
+          -count=1 \
+          -covermode=atomic \
+          -coverpkg=./... \
+          -coverprofile=coverage.out \
+          ./...
+      - go tool cover -func=coverage.out | grep total
+
+  coverage:html:
+    desc: "Generate HTML coverage report"
+    deps:
+      - coverage
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
 
   bench-cache-all:
     desc: "Run all cache value decoding benchmarks"
@@ -51,7 +130,8 @@ tasks:
       GOMAXPROCS: "1"
     cmds:
       - |
-        go test -mod=vendor \
+        GOWORK=off go test \
+          -mod=readonly \
           -run='^$' \
           -bench='^BenchmarkDecodeCacheValue$' \
           -benchmem \
@@ -63,7 +143,8 @@ tasks:
     desc: "Benchmark parallel cache value decoding"
     cmds:
       - |
-        go test -mod=vendor \
+        GOWORK=off go test \
+          -mod=readonly \
           -run='^$' \
           -bench='^BenchmarkDecodeCacheValueParallel$' \
           -benchmem \
@@ -72,99 +153,71 @@ tasks:
           -cpu=1,4,8,20 \
           > parallel.txt
 
-  tidy-examples:
-    desc: "Tidy example module dependencies"
+  _tidy-module:
+    internal: true
+    requires:
+      vars:
+        - WORK_DIR
+    dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
-      - |
-        set -euo pipefail
+      - echo "==> {{.WORK_DIR}}"
+      - GOWORK=off go mod tidy -v
 
-        find ./examples -name go.mod -print |
-        sort |
-        while IFS= read -r mod; do
-          dir="$(dirname "$mod")"
-          echo "==> $dir"
-
-          (
-            cd "$dir"
-            GOWORK=off go mod tidy -v
-          )
-        done
-
-  check-examples:
-    desc: "Check example modules against the local checkout"
+  _verify-module:
+    internal: true
+    requires:
+      vars:
+        - WORK_DIR
+    dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
-      - |
-        set -euo pipefail
+      - echo "==> {{.WORK_DIR}}"
+      - GOWORK=off go mod tidy -diff
+      - GOWORK=off go mod verify
+      - go vet -mod=readonly ./...
+      - go test -mod=readonly -run='^$' ./...
 
-        root="$(pwd)"
-
-        find ./examples -name go.mod -print |
-        sort |
-        while IFS= read -r mod; do
-          dir="$(dirname "$mod")"
-          echo "==> $dir"
-
-          (
-            workspace="$(mktemp -d)"
-            trap 'rm -rf "$workspace"' EXIT
-
-            (
-              cd "$workspace"
-              GOWORK=off go work init "$root" "$root/${dir#./}"
-            )
-
-            cd "$dir"
-            GOWORK="$workspace/go.work" go mod verify
-            GOWORK="$workspace/go.work" go vet ./...
-            GOWORK="$workspace/go.work" go test -race -count=1 ./...
-          )
-        done
-
-  vendor-root:
-    desc: "Vendor root module"
+  _run-tests:
+    internal: true
+    requires:
+      vars:
+        - WORK_DIR
+    dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
-      - rm -rf vendor
-      - go mod tidy -v
-      - go mod vendor
+      - echo "==> {{.WORK_DIR}}"
+      - go test -mod=readonly -shuffle=on -v -count=1 ./...
 
-  lint-root:
-    desc: "Lint root module"
+  _run-race-tests:
+    internal: true
+    requires:
+      vars:
+        - WORK_DIR
+    dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
-      - task: _run-linter
-        vars:
-          WORK_DIR: /app
-
-  test-root:
-    desc: "Test root module"
-    cmds:
-      - go test -mod=vendor -race -v -count=1 ./...
-
-  coverage:
-    desc: Run tests and print total coverage
-    cmds:
-      - go test -tags=integration -count=1 -covermode=atomic -coverprofile=coverage.out ./...
-      - go tool cover -func=coverage.out | grep total
-
-  coverage:html:
-    desc: Generate HTML coverage report
-    deps:
-      - coverage
-    cmds:
-      - go tool cover -html=coverage.out -o coverage.html
+      - echo "==> {{.WORK_DIR}}"
+      - go test -mod=readonly -race -shuffle=on -v -count=1 ./...
 
   _run-linter:
-    desc: "Run golangci-lint in Docker"
+    internal: true
+    requires:
+      vars:
+        - WORK_DIR
     cmds:
+      - echo "==> {{.WORK_DIR}}"
+      - mkdir -p "{{.GOSUMCACHE}}"
       - >
         docker run --rm
         -u $(id -u):$(id -g)
-        -v {{.PWD_DIR}}:/app
+        -v {{.ROOT_DIR}}:/app
         -v {{.GOMODCACHE}}:/go/pkg/mod
+        -v {{.GOSUMCACHE}}:/go/pkg/sumdb
         -v {{.GOCACHE}}:/go/build-cache
         -e GOMODCACHE=/go/pkg/mod
         -e GOCACHE=/go/build-cache
         -e GOLANGCI_LINT_CACHE=/go/build-cache/golangci-lint
-        -e GOWORK=off
+        -e GOWORK=/app/go.work
         -w {{.WORK_DIR}}
         golangci/golangci-lint:{{.LINTER_VER}}
-        golangci-lint run --timeout 5m --fix --modules-download-mode vendor
+        golangci-lint run
+        --config=/app/.golangci.yml
+        --timeout=5m
+        --modules-download-mode=readonly
