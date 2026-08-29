@@ -371,31 +371,21 @@ removing it:
 <!-- @formatter:off -->
 ```go
 // Update the status only if it is still "processing".
-swapped, err := client.CompareAndSwap(
-    ctx,
-    "order:42:status",
-    "processing",
-    "completed",
-    xredis.KeepTTL,
-)
+swapped, err := client.CompareAndSwap(ctx, "order:42:status", "processing", "completed", xredis.KeepTTL)
 if err != nil {
-    return err
+	return err
 }
 if !swapped {
-    return errors.New("status changed concurrently")
+	return errors.New("status changed concurrently")
 }
 
 // Delete the key only if its current value is still "completed".
-deleted, err := client.CompareAndDelete(
-    ctx,
-    "order:42:status",
-    "completed",
-)
+deleted, err := client.CompareAndDelete(ctx, "order:42:status", "completed")
 if err != nil {
-    return err
+	return err
 }
 if !deleted {
-    return errors.New("status changed before deletion")
+	return errors.New("status changed before deletion")
 }
 ```
 <!-- @formatter:on -->
@@ -406,18 +396,12 @@ if !deleted {
 
 ### Hash fields
 
-`HCompareAndSwap` and `HCompareAndDelete` atomically compare and modify an individual Redis hash field:
+`HFieldCompareAndSwap` and `HFieldCompareAndDelete` atomically compare and modify an individual Redis hash field:
 
 <!-- @formatter:off -->
 ```go
 // Update the "status" field only if it is still "processing".
-swapped, err := client.HCompareAndSwap(
-    ctx,
-    "order:42",
-    "status",
-    "processing",
-    "completed",
-)
+swapped, err := client.HFieldCompareAndSwap(ctx, "order:42", "status", "processing", "completed")
 if err != nil {
     return err
 }
@@ -426,23 +410,19 @@ if !swapped {
 }
 
 // Delete the "status" field only if it is still "completed".
-deleted, err := client.HCompareAndDelete(
-    ctx,
-    "order:42",
-    "status",
-    "completed",
-)
+deleted, err := client.HFieldCompareAndDelete(ctx, "order:42", "status", "completed")
 if err != nil {
     return err
 }
 if !deleted {
     return errors.New("status changed before deletion")
 }
+
 ```
 <!-- @formatter:on -->
 
 > [!NOTE]
-> Hash-field compare operations preserve the existing expiration of the hash key. If `HCompareAndDelete` removes the
+> Hash-field compare operations preserve the existing expiration of the hash key. If `HFieldCompareAndDelete` removes the
 > last remaining field, Redis removes the hash key.
 
 ### Versioned structured values
@@ -478,15 +458,12 @@ if err != nil {
 }
 
 // Create the object only if the Redis key does not exist.
-revision, created, err := store.SetIfAbsent(
-	ctx,
-	"42",
-	Order{
-		ID:     "42",
-		Status: "processing",
-	},
-	time.Hour,
-)
+order := Order{
+	ID:     "42",
+	Status: "processing",
+}
+
+revision, created, err := store.SetIfAbsent(ctx, "42", order, time.Hour)
 if err != nil {
 	return err
 }
@@ -510,13 +487,7 @@ updated := entry.Value
 updated.Status = "completed"
 
 // Replace the value only if the revision remains unchanged.
-newRevision, swapped, err := store.CompareAndSwap(
-	ctx,
-	"42",
-	entry.Revision,
-	updated,
-	xredis.KeepTTL,
-)
+newRevision, swapped, err := store.CompareAndSwap(ctx, "42", entry.Revision, updated, xredis.KeepTTL)
 if err != nil {
 	return err
 }
@@ -525,11 +496,7 @@ if !swapped {
 }
 
 // Delete the object only if the revision still matches.
-deleted, err := store.CompareAndDelete(
-	ctx,
-	"42",
-	newRevision,
-)
+deleted, err := store.CompareAndDelete(ctx, "42", newRevision)
 if err != nil {
 	return err
 }
@@ -615,12 +582,7 @@ continue operating after their lease has expired, for example after a long pause
 <!-- @formatter:off -->
 ```go
 // Acquire a 30-second fenced lease for the order.
-lock, acquired, err := client.TryFencedLock(
-    ctx,
-    "lock:{order:42}",
-    "fence:{order:42}",
-    30*time.Second,
-)
+lock, acquired, err := client.TryFencedLock(ctx, "lock:{order:42}", "fence:{order:42}", 30*time.Second)
 if err != nil {
     return fmt.Errorf("acquire fenced lock: %w", err)
 }
@@ -633,8 +595,7 @@ defer func() {
     unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    if err := lock.Unlock(unlockCtx); err != nil &&
-        !errors.Is(err, xredis.ErrLockNotOwned) {
+    if err := lock.Unlock(unlockCtx); err != nil && !errors.Is(err, xredis.ErrLockNotOwned) {
         log.Printf("release fenced lock: %v", err)
     }
 }()

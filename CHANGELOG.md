@@ -1,13 +1,15 @@
 # Changelog
 
-## v0.3.1
+## v0.4.0
 
-This release improves typed cache decoding performance while keeping the public API unchanged.
+This release improves typed cache decoding performance and makes hash-field compare operations more explicit.
 
 ### Changed
 
-* **Cache decoding** — reduced reflection overhead for pointer-based cache values while retaining the existing
-  allocation behavior across Redis-native and codec-backed decoding paths.
+* **Cache decoding** — reduced reflection overhead for pointer-based values while preserving efficient decoding across
+  Redis-native and codec-backed cache paths.
+* **Hash field compare API** — renamed `HCompareAndSwap` to `HFieldCompareAndSwap` and `HCompareAndDelete` to
+  `HFieldCompareAndDelete` to clearly reflect that these operations target individual hash fields.
 
 ## v0.3.0
 

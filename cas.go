@@ -133,7 +133,7 @@ func (c *Client) CompareAndSwap(
 	return result == 1, nil
 }
 
-// HCompareAndDelete deletes a hash field only when its current value equals
+// HFieldCompareAndDelete deletes a hash field only when its current value equals
 // the expected old value.
 //
 // expected is passed as a raw Redis argument and must use the same encoding as
@@ -143,7 +143,7 @@ func (c *Client) CompareAndSwap(
 // field contains a different value.
 //
 // If the deleted field is the last field in the hash, Redis removes the hash key.
-func (c *Client) HCompareAndDelete(
+func (c *Client) HFieldCompareAndDelete(
 	ctx context.Context,
 	key string,
 	field string,
@@ -157,7 +157,7 @@ func (c *Client) HCompareAndDelete(
 	return result == 1, nil
 }
 
-// HCompareAndSwap swaps a hash field only when its current value equals the
+// HFieldCompareAndSwap swaps a hash field only when its current value equals the
 // expected old value.
 //
 // expected and value are passed as raw Redis arguments and must use the same
@@ -167,7 +167,7 @@ func (c *Client) HCompareAndDelete(
 // field contains a different value.
 //
 // A successful swap preserves the existing expiration of the hash key.
-func (c *Client) HCompareAndSwap(
+func (c *Client) HFieldCompareAndSwap(
 	ctx context.Context,
 	key string,
 	field string,
