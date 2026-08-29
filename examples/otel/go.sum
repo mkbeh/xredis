@@ -23,8 +23,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2skhE=
 github.com/klauspost/cpuid/v2 v2.2.10/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
-github.com/mkbeh/xredis v0.3.0 h1:ZQpehGpoQkShsFFB8Pe95wLubshk7rYRNfpVLwbOYMg=
-github.com/mkbeh/xredis v0.3.0/go.mod h1:oShzs/WYMRK9rrosdsPIk8oIwXl+qdB7ou9JPZcpuPI=
+github.com/mkbeh/xredis v0.4.0 h1:4GvmVxVKBuBrC8p2tjfePP0p+OqtK+PlyV4Wp3krUrI=
+github.com/mkbeh/xredis v0.4.0/go.mod h1:oShzs/WYMRK9rrosdsPIk8oIwXl+qdB7ou9JPZcpuPI=
 github.com/redis/go-redis/extra/rediscmd/v9 v9.22.0 h1:MQPzEEnpD0BMPufBLABnMYLJVwM7xi7vZ+srO8Nr0s8=
 github.com/redis/go-redis/extra/rediscmd/v9 v9.22.0/go.mod h1:eve0JFcLRwFVj3RA85rrrV5+UJ+K9LDyU7kf2UdSueM=
 github.com/redis/go-redis/extra/redisotel-native/v9 v9.22.0 h1:dOJ093iXM9dFU5cRdG+WmjmQz23ZrbqMUJzlzOjoSeM=

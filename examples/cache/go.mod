@@ -3,7 +3,7 @@ module cache
 go 1.27
 
 require (
-	github.com/mkbeh/xredis v0.3.0
+	github.com/mkbeh/xredis v0.4.0
 	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/prometheus v0.68.0
