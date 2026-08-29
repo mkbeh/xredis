@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.0
+
+This release adopts Go 1.27, adds generic client factory methods, and refreshes the core Redis and observability
+dependencies.
+
+### Added
+
+* **Generic client factories** — added `Client.Cache[T]` and `Client.VersionedStore[T]` for creating typed components
+  directly from an existing client, alongside the existing `NewCache[T]` and `NewVersionedStore[T]` constructors.
+
+### Changed
+
+* **Go 1.27** — raised the minimum supported Go version to 1.27 and adopted generic methods in the public client API.
+* **Dependency updates** — updated `go-redis`, OpenTelemetry, Prometheus, and related dependencies to their latest
+  compatible releases.
+
 ## v0.2.1
 
 Initial release of `xredis`, providing an opinionated `go-redis` wrapper with application-level reliability patterns,

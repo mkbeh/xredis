@@ -297,11 +297,12 @@ fmt.Printf("Loaded %s (active: %t)\n", loadedUser.Name, loadedUser.Active)
 `Cache[T]` implements a typed cache-aside workflow with TTL jitter, negative caching, and loader deduplication for
 concurrent misses.
 
+Typed caches can be created with `Client.Cache[T]` or the package-level `NewCache[T]` constructor.
+
 <!-- @formatter:off -->
 ```go
 // Create a typed cache for User values.
-cache, err := xredis.NewCache[User](
-    client,
+cache, err := client.Cache[User](
     xredis.WithCachePrefix("cache:user:"),
     xredis.WithCacheTTL(10*time.Minute),
     xredis.WithCacheJitter(15*time.Second),
@@ -345,8 +346,7 @@ Use `WithCacheNegativeMarker` when the default marker may also occur as a valid 
 
 <!-- @formatter:off -->
 ```go
-cache, err := xredis.NewCache[User](
-    client,
+cache, err := client.Cache[User](
     xredis.WithCacheNegativeTTL(30*time.Second),
     xredis.WithCacheNegativeMarker([]byte("\x00xredis:not-found\xff")),
 )
@@ -447,9 +447,11 @@ if !deleted {
 
 ### Versioned structured values
 
-`VersionedStore[T]` provides revision-based optimistic concurrency control for structured values. Instead of sending
-the previous encoded value back to Redis for comparison, update and delete operations validate a compact opaque
-revision. A successful update still transmits the new encoded value.
+`VersionedStore[T]` provides revision-based optimistic concurrency control for structured values. Instead of sending the
+previous encoded value back to Redis for comparison, update and delete operations validate a compact opaque revision. A
+successful update still transmits the new encoded value.
+
+Versioned stores can be created with `Client.VersionedStore[T]` or the package-level `NewVersionedStore[T]` constructor.
 
 #### Storage schema
 
@@ -468,8 +470,7 @@ only if the revision still matches.
 <!-- @formatter:off -->
 ```go
 // Initialize a typed versioned store.
-store, err := xredis.NewVersionedStore[Order](
-	client,
+store, err := client.VersionedStore[Order](
 	xredis.WithVersionedStorePrefix("versioned:order:"),
 )
 if err != nil {
