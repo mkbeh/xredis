@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.1
+
+This release improves typed cache decoding performance while keeping the public API unchanged.
+
+### Changed
+
+* **Cache decoding** — reduced reflection overhead for pointer-based cache values while retaining the existing
+  allocation behavior across Redis-native and codec-backed decoding paths.
+
 ## v0.3.0
 
 This release adopts Go 1.27, adds generic client factory methods, and refreshes the core Redis and observability
