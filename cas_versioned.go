@@ -3,8 +3,8 @@ package xredis
 import (
 	"context"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -145,10 +145,16 @@ type versionedStoreOptions struct {
 //
 // The client Codec is used by default. If the client does not provide one,
 // JSONCodec is used.
-func NewVersionedStore[T any](
-	client *Client,
-	opts ...VersionedStoreOption,
-) (*VersionedStore[T], error) {
+func NewVersionedStore[T any](client *Client, opts ...VersionedStoreOption) (*VersionedStore[T], error) {
+	return newVersionedStore[T](client, opts...)
+}
+
+// VersionedStore creates a typed versioned value store bound to this client.
+func (c *Client) VersionedStore[T any](opts ...VersionedStoreOption) (*VersionedStore[T], error) {
+	return newVersionedStore[T](c, opts...)
+}
+
+func newVersionedStore[T any](client *Client, opts ...VersionedStoreOption) (*VersionedStore[T], error) {
 	if err := validateConcreteType[T](); err != nil {
 		return nil, err
 	}
@@ -279,7 +285,7 @@ func (s *VersionedStore[T]) SetIfAbsent(
 		return "", false, err
 	}
 
-	revision = Revision(uuid.NewString())
+	revision = Revision(uuid.NewV4().String())
 
 	created, err = s.setIfAbsent(ctx, key, data, revision, expiration)
 	if err != nil {
@@ -324,7 +330,7 @@ func (s *VersionedStore[T]) CompareAndSwap(
 		return "", false, err
 	}
 
-	revision = Revision(uuid.NewString())
+	revision = Revision(uuid.NewV4().String())
 
 	result, err := versionedStoreCompareAndSwapScript.Run(
 		ctx,

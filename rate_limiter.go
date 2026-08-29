@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -270,7 +270,7 @@ func newRateLimiter(client *Client, opts ...RateLimiterOption) (*RateLimiter, er
 	return &RateLimiter{
 		client: client,
 		prefix: options.prefix,
-		id:     uuid.NewString(),
+		id:     uuid.NewV4().String(),
 	}, nil
 }
 

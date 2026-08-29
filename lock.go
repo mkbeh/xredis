@@ -3,8 +3,8 @@ package xredis
 import (
 	"context"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -55,7 +55,7 @@ func (l *Lock) Token() string {
 //
 // It returns acquired=false when the lock already exists.
 func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*Lock, bool, error) {
-	return c.TryLockWithToken(ctx, key, uuid.NewString(), ttl)
+	return c.TryLockWithToken(ctx, key, uuid.NewV4().String(), ttl)
 }
 
 // TryLockWithToken tries to acquire a Redis lock using the provided owner token.

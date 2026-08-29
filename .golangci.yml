@@ -1,7 +1,7 @@
 version: "2"
 
 run:
-  go: "1.26"
+  go: "1.27"
   timeout: 5m
   allow-parallel-runners: true
 
@@ -168,7 +168,8 @@ formatters:
     - goimports
   settings:
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
   exclusions:
     generated: lax
     paths:

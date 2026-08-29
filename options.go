@@ -7,8 +7,8 @@ import (
 	"net"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/auth"
@@ -86,7 +86,7 @@ func newOptions(opts ...Option) *options {
 	}
 
 	if options.clientID == "" {
-		options.clientID = uuid.NewString()
+		options.clientID = uuid.NewV4().String()
 	}
 
 	if options.codec == nil {

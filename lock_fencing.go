@@ -3,8 +3,8 @@ package xredis
 import (
 	"context"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -178,7 +178,7 @@ func (c *Client) TryFencedLock(
 	ttl time.Duration,
 	opts ...FencedLockOption,
 ) (*FencedLock, bool, error) {
-	return c.TryFencedLockWithToken(ctx, key, fencingKey, uuid.NewString(), ttl, opts...)
+	return c.TryFencedLockWithToken(ctx, key, fencingKey, uuid.NewV4().String(), ttl, opts...)
 }
 
 // TryFencedLockWithToken tries to acquire a Redis lock using the provided owner
