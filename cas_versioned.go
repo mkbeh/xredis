@@ -3,8 +3,8 @@ package xredis
 import (
 	"context"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -279,7 +279,7 @@ func (s *VersionedStore[T]) SetIfAbsent(
 		return "", false, err
 	}
 
-	revision = Revision(uuid.NewString())
+	revision = Revision(uuid.NewV4().String())
 
 	created, err = s.setIfAbsent(ctx, key, data, revision, expiration)
 	if err != nil {
@@ -324,7 +324,7 @@ func (s *VersionedStore[T]) CompareAndSwap(
 		return "", false, err
 	}
 
-	revision = Revision(uuid.NewString())
+	revision = Revision(uuid.NewV4().String())
 
 	result, err := versionedStoreCompareAndSwapScript.Run(
 		ctx,
