@@ -12,20 +12,69 @@ vars:
   GOSUMCACHE:
     sh: echo "$(go env GOPATH)/pkg/sumdb"
 
-  # Root module + all standalone example modules.
+  # Root module + all local submodules and standalone examples.
   MODULE_DIRS:
     sh: |
       {
         printf '.\n'
-        find ./examples -type f -name go.mod -not -path '*/vendor/*' -print |
-          while IFS= read -r mod; do
+        find ./extra ./examples \
+          -name go.mod \
+          -type f \
+          -not -path '*/vendor/*' \
+          -print 2>/dev/null || true
+      } |
+        while IFS= read -r mod; do
+          if [ "$mod" = "." ]; then
+            printf '.\n'
+          else
             dirname "$mod"
-          done
-      } | sort -u
+          fi
+        done |
+        sort -u
+
+  # Production modules only. Examples are still verified, linted, and tested,
+  # but are excluded from aggregate library coverage and strict tidy checks.
+  PRODUCTION_MODULE_DIRS:
+    sh: |
+      {
+        printf '.\n'
+        find ./extra \
+          -name go.mod \
+          -type f \
+          -not -path '*/vendor/*' \
+          -print 2>/dev/null || true
+      } |
+        while IFS= read -r mod; do
+          if [ "$mod" = "." ]; then
+            printf '.\n'
+          else
+            dirname "$mod"
+          fi
+        done |
+        sort -u
+
+  COVERAGE_MODULE_DIRS:
+    sh: |
+      {
+        printf '.\n'
+        find ./extra \
+          -name go.mod \
+          -type f \
+          -not -path '*/vendor/*' \
+          -print 2>/dev/null || true
+      } |
+        while IFS= read -r mod; do
+          if [ "$mod" = "." ]; then
+            printf '.\n'
+          else
+            dirname "$mod"
+          fi
+        done |
+        sort -u | tr '\n' ' '
 
 env:
   GOTOOLCHAIN: "local"
-  # Resolve example imports against the current root checkout.
+  # Resolve local modules and examples against the current checkout.
   GOWORK: "{{.ROOT_DIR}}/go.work"
 
 tasks:
@@ -33,7 +82,7 @@ tasks:
     desc: "Initialize or reset the local Go workspace"
     run: once
     cmds:
-      - bash .github/scripts/create-go-workspace.sh
+      - bash .github/scripts/create-go-workspace.sh --with-examples
 
   run:
     desc: "Run all project checks"
@@ -48,27 +97,22 @@ tasks:
       - task: run
 
   tidy:
-    desc: "Tidy all modules"
+    desc: "Tidy production modules"
     cmds:
-      - for: { var: MODULE_DIRS }
+      - for: { var: PRODUCTION_MODULE_DIRS }
         task: _tidy-module
         vars:
           WORK_DIR: "{{.ITEM}}"
-
-  tidy-root:
-    desc: "Tidy the root module"
-    dir: "{{.ROOT_DIR}}"
-    cmds:
-      - GOWORK=off go mod tidy -v
 
   verify:
     desc: "Verify module files and compile all modules"
     deps:
       - init-workspace
     cmds:
-      # Keep the root module strictly tidy in Wave 1 without forcing example
-      # go.mod/go.sum files to change before the root module is released.
-      - task: _verify-root-tidy
+      - for: { var: PRODUCTION_MODULE_DIRS }
+        task: _verify-tidy
+        vars:
+          WORK_DIR: "{{.ITEM}}"
 
       - for: { var: MODULE_DIRS }
         task: _verify-module
@@ -106,26 +150,51 @@ tasks:
           WORK_DIR: "{{.ITEM}}"
 
   coverage:
-    desc: "Run root tests and print total coverage"
-    dir: "{{.ROOT_DIR}}"
+    desc: "Run tests and print total coverage for production modules"
+    deps:
+      - init-workspace
     cmds:
       - |
-        GOWORK=off go test \
-          -mod=readonly \
-          -shuffle=on \
-          -count=1 \
-          -covermode=atomic \
-          -coverpkg=./... \
-          -coverprofile=coverage.out \
-          ./...
-      - GOWORK=off go tool cover -func=coverage.out | grep total
+        set -eu
+
+        root="{{.ROOT_DIR}}"
+        output="$root/coverage.out"
+        profiles="$(mktemp -d)"
+
+        cleanup() {
+          rm -rf "$profiles"
+        }
+        trap cleanup EXIT
+
+        printf 'mode: atomic\n' > "$output"
+
+        for module in {{.COVERAGE_MODULE_DIRS}}; do
+          echo "==> $module"
+
+          profile="$profiles/$(printf '%s' "$module" | tr '/.' '__').out"
+
+          (
+            cd "$root/$module"
+            go test \
+              -mod=readonly \
+              -shuffle=on \
+              -count=1 \
+              -covermode=atomic \
+              -coverprofile="$profile" \
+              ./...
+          )
+
+          tail -n +2 "$profile" >> "$output"
+        done
+
+        go tool cover -func="$output" | grep total
 
   coverage:html:
     desc: "Generate HTML coverage report"
     deps:
       - coverage
     cmds:
-      - GOWORK=off go tool cover -html=coverage.out -o coverage.html
+      - go tool cover -html=coverage.out -o coverage.html
 
   bench-cache-all:
     desc: "Run all cache value decoding benchmarks"
@@ -142,7 +211,7 @@ tasks:
         GOWORK=off go test \
           -mod=readonly \
           -run='^$' \
-          -bench='^BenchmarkDecodeCacheValue$' \
+          -bench='^BenchmarkDecode(CacheValue|RawCacheValue)$' \
           -benchmem \
           -benchtime=1s \
           -count=5 \
@@ -172,10 +241,14 @@ tasks:
       - echo "==> {{.WORK_DIR}}"
       - GOWORK=off go mod tidy -v
 
-  _verify-root-tidy:
+  _verify-tidy:
     internal: true
-    dir: "{{.ROOT_DIR}}"
+    requires:
+      vars:
+        - WORK_DIR
+    dir: "{{.ROOT_DIR}}/{{.WORK_DIR}}"
     cmds:
+      - echo "==> tidy {{.WORK_DIR}}"
       - GOWORK=off go mod tidy -diff
 
   _verify-module:

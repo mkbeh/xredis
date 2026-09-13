@@ -2,253 +2,158 @@ package xredis
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
-const metricsInstrumentationName = "github.com/mkbeh/xredis"
-
-// metrics contains wrapper-level metric instruments.
+// Metrics provides wrapper-level metrics instrumentation for a Client.
 //
-// The structure is initialized by InitObservability and is immutable after
-// publication.
-type metrics struct {
-	attributes attribute.Set
-
-	// Cache metrics.
-	cacheRequests           metric.Int64Counter
-	cacheLoaderDuration     metric.Float64Histogram
-	cacheSingleflightShared metric.Int64Counter
-
-	// Lock metrics.
-	lockOperations metric.Int64Counter
-
-	// Rate limiter metrics.
-	rateLimitDecisions metric.Int64Counter
-	rateLimitDuration  metric.Float64Histogram
+// Implementations must be safe to reuse across multiple clients. Register may
+// be called concurrently. Metrics returned for a client must be safe for
+// concurrent use.
+type Metrics interface {
+	Register(client *Client) ClientMetrics
 }
 
-var globalMetrics atomic.Pointer[metrics]
-
-func newMetrics(provider metric.MeterProvider) (*metrics, error) {
-	meter := provider.Meter(metricsInstrumentationName)
-
-	cacheRequests, err := meter.Int64Counter(
-		"redis.client.cache.requests",
-		metric.WithDescription(
-			"Number of Redis cache requests.",
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	cacheLoaderDuration, err := meter.Float64Histogram(
-		"redis.client.cache.loader.duration",
-		metric.WithDescription(
-			"Duration of Redis cache loader executions.",
-		),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(
-			cacheLoaderDurationBuckets...,
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	cacheSingleflightShared, err := meter.Int64Counter(
-		"redis.client.cache.singleflight.shared",
-		metric.WithDescription(
-			"Number of Redis cache requests that shared a singleflight result.",
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	lockOperations, err := meter.Int64Counter(
-		"redis.client.lock.operations",
-		metric.WithDescription(
-			"Number of Redis lock operations.",
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rateLimitDecisions, err := meter.Int64Counter(
-		"redis.client.rate_limiter.decisions",
-		metric.WithDescription(
-			"Number of Redis rate limiter decisions.",
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rateLimitDuration, err := meter.Float64Histogram(
-		"redis.client.rate_limiter.duration",
-		metric.WithDescription(
-			"Duration of Redis rate limiter decisions.",
-		),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(
-			rateLimitDurationBuckets...,
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &metrics{
-		cacheRequests:           cacheRequests,
-		cacheLoaderDuration:     cacheLoaderDuration,
-		cacheSingleflightShared: cacheSingleflightShared,
-		lockOperations:          lockOperations,
-		rateLimitDecisions:      rateLimitDecisions,
-		rateLimitDuration:       rateLimitDuration,
-	}, nil
+// ClientMetrics contains domain-specific metrics bound to a Client.
+type ClientMetrics struct {
+	Cache       CacheMetrics
+	Lock        LockMetrics
+	RateLimiter RateLimiterMetrics
 }
 
-func (m *metrics) recordCacheRequest(
-	ctx context.Context,
-	operation string,
-	result string,
-) {
-	if m == nil {
+// CacheMetrics records cache metrics.
+type CacheMetrics interface {
+	RecordRequest(ctx context.Context, operation, result string)
+	RecordLoaderDuration(ctx context.Context, outcome string, duration time.Duration)
+	RecordSingleflightShared(ctx context.Context)
+}
+
+// LockMetrics records distributed lock metrics.
+type LockMetrics interface {
+	RecordOperation(ctx context.Context, lockType, operation, outcome string)
+}
+
+// RateLimiterMetrics records rate limiter metrics.
+type RateLimiterMetrics interface {
+	RecordDecision(ctx context.Context, algorithm, outcome string, duration time.Duration)
+}
+
+type clientMetrics struct {
+	cache   cacheMetrics
+	lock    lockMetrics
+	limiter rateLimiterMetrics
+}
+
+func newClientMetrics(metrics ClientMetrics) clientMetrics {
+	return clientMetrics{
+		cache: cacheMetrics{
+			metrics: metrics.Cache,
+		},
+		lock: lockMetrics{
+			metrics: metrics.Lock,
+		},
+		limiter: rateLimiterMetrics{
+			metrics: metrics.RateLimiter,
+		},
+	}
+}
+
+type cacheMetrics struct {
+	metrics CacheMetrics
+}
+
+func (m cacheMetrics) recordRequest(ctx context.Context, operation, result string) {
+	if m.metrics == nil {
 		return
 	}
 
-	m.cacheRequests.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(metricAttrCacheOperation, operation),
-			attribute.String(metricAttrCacheResult, result),
-		),
-	)
+	m.metrics.RecordRequest(ctx, operation, result)
 }
 
-func (m *metrics) recordCacheLoaderDuration(
-	ctx context.Context,
-	outcome string,
-	duration time.Duration,
-) {
-	if m == nil {
+func (m cacheMetrics) recordLoaderDuration(ctx context.Context, outcome string, duration time.Duration) {
+	if m.metrics == nil {
 		return
 	}
 
-	m.cacheLoaderDuration.Record(
-		ctx,
-		duration.Seconds(),
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(metricAttrLoaderOutcome, outcome),
-		),
-	)
+	m.metrics.RecordLoaderDuration(ctx, outcome, duration)
 }
 
-func (m *metrics) recordCacheSingleflightShared(ctx context.Context) {
-	if m == nil {
+func (m cacheMetrics) recordSingleflightShared(ctx context.Context) {
+	if m.metrics == nil {
 		return
 	}
 
-	m.cacheSingleflightShared.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
-	)
+	m.metrics.RecordSingleflightShared(ctx)
 }
 
-func (m *metrics) recordLockOperation(
-	ctx context.Context,
-	lockType string,
-	operation string,
-	outcome string,
-) {
-	if m == nil {
+type lockMetrics struct {
+	metrics LockMetrics
+}
+
+func (m lockMetrics) recordOperation(ctx context.Context, lockType, operation, outcome string) {
+	if m.metrics == nil {
 		return
 	}
 
-	m.lockOperations.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(metricAttrLockType, lockType),
-			attribute.String(metricAttrLockOperation, operation),
-			attribute.String(metricAttrLockOutcome, outcome),
-		),
-	)
+	m.metrics.RecordOperation(ctx, lockType, operation, outcome)
 }
 
-func (m *metrics) recordRateLimitDecision(
-	ctx context.Context,
-	algorithm string,
-	outcome string,
-	duration time.Duration,
-) {
-	if m == nil {
+type rateLimiterMetrics struct {
+	metrics RateLimiterMetrics
+}
+
+func (m rateLimiterMetrics) recordDecision(ctx context.Context, algorithm, outcome string, duration time.Duration) {
+	if m.metrics == nil {
 		return
 	}
 
-	options := []metric.RecordOption{
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(metricAttrRateLimitAlgorithm, algorithm),
-			attribute.String(metricAttrRateLimitOutcome, outcome),
-		),
-	}
-
-	m.rateLimitDecisions.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(metricAttrRateLimitAlgorithm, algorithm),
-			attribute.String(metricAttrRateLimitOutcome, outcome),
-		),
-	)
-
-	m.rateLimitDuration.Record(
-		ctx,
-		duration.Seconds(),
-		options...,
-	)
+	m.metrics.RecordDecision(ctx, algorithm, outcome, duration)
 }
 
-func newClientMetrics(labels map[string]string) *metrics {
-	base := globalMetrics.Load()
-	if base == nil {
-		return nil
-	}
+const (
+	cacheOperationGet       = "get"
+	cacheOperationGetOrLoad = "get_or_load"
+)
 
-	// Instruments are shared, while attributes belong to one Client.
-	clientMetrics := *base
-	clientMetrics.attributes = newMetricAttributes(labels)
+const (
+	cacheResultHit         = "hit"
+	cacheResultMiss        = "miss"
+	cacheResultNegativeHit = "negative_hit"
+	cacheResultError       = "error"
+)
 
-	return &clientMetrics
-}
+const (
+	loaderOutcomeSuccess  = "success"
+	loaderOutcomeNotFound = "not_found"
+	loaderOutcomeError    = "error"
+)
 
-func newMetricAttributes(labels map[string]string) attribute.Set {
-	attrs := make([]attribute.KeyValue, 0, len(labels))
+const (
+	lockTypeLease  = "lease"
+	lockTypeFenced = "fenced"
+)
 
-	for key, value := range labels {
-		attrs = append(attrs, attribute.String(key, value))
-	}
+const (
+	lockOperationAcquire = "acquire"
+	lockOperationExtend  = "extend"
+	lockOperationUnlock  = "unlock"
+)
 
-	return attribute.NewSet(attrs...)
-}
+const (
+	lockOutcomeSuccess   = "success"
+	lockOutcomeContended = "contended"
+	lockOutcomeNotOwned  = "not_owned"
+	lockOutcomeError     = "error"
+)
 
-func setMetrics(value *metrics) {
-	globalMetrics.Store(value)
-}
+const (
+	rateLimitAlgorithmFixedWindow   = "fixed_window"
+	rateLimitAlgorithmSlidingWindow = "sliding_window"
+	rateLimitAlgorithmTokenBucket   = "token_bucket"
+)
 
-func clearMetrics(value *metrics) {
-	globalMetrics.CompareAndSwap(value, nil)
-}
+const (
+	rateLimitOutcomeAllowed  = "allowed"
+	rateLimitOutcomeRejected = "rejected"
+	rateLimitOutcomeError    = "error"
+)

@@ -233,7 +233,7 @@ func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	metricResult := cacheResultError
 
 	defer func() {
-		c.client.metrics.recordCacheRequest(
+		c.client.metrics.cache.recordRequest(
 			ctx,
 			cacheOperationGet,
 			metricResult,
@@ -279,7 +279,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 	metricResult := cacheResultError
 
 	defer func() {
-		c.client.metrics.recordCacheRequest(
+		c.client.metrics.cache.recordRequest(
 			ctx,
 			cacheOperationGetOrLoad,
 			metricResult,
@@ -321,7 +321,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 
 	case result := <-ch:
 		if result.Shared {
-			c.client.metrics.recordCacheSingleflightShared(ctx)
+			c.client.metrics.cache.recordSingleflightShared(ctx)
 		}
 
 		if result.Err != nil {
@@ -423,7 +423,7 @@ func (c *Cache[T]) runLoader(
 	outcome := loaderOutcomeError
 
 	defer func() {
-		c.client.metrics.recordCacheLoaderDuration(
+		c.client.metrics.cache.recordLoaderDuration(
 			ctx,
 			outcome,
 			time.Since(start),

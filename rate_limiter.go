@@ -398,7 +398,7 @@ func (l *RateLimiter) runDecision(
 	outcome := rateLimitOutcomeError
 
 	defer func() {
-		l.client.metrics.recordRateLimitDecision(
+		l.client.metrics.limiter.recordDecision(
 			ctx,
 			algorithm,
 			outcome,

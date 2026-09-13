@@ -214,7 +214,7 @@ func (c *Client) TryFencedLockWithToken(
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		c.metrics.recordLockOperation(
+		c.metrics.lock.recordOperation(
 			ctx,
 			lockTypeFenced,
 			lockOperationAcquire,
@@ -279,7 +279,7 @@ func (l *FencedLock) Unlock(ctx context.Context) error {
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		l.lock.client.metrics.recordLockOperation(
+		l.lock.client.metrics.lock.recordOperation(
 			ctx,
 			lockTypeFenced,
 			lockOperationUnlock,
@@ -323,7 +323,7 @@ func (l *FencedLock) Extend(ctx context.Context, ttl time.Duration) (bool, error
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		l.lock.client.metrics.recordLockOperation(
+		l.lock.client.metrics.lock.recordOperation(
 			ctx,
 			lockTypeFenced,
 			lockOperationExtend,

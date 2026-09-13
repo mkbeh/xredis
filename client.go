@@ -2,8 +2,8 @@ package xredis
 
 import (
 	"context"
+	"maps"
 
-	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 )
 
@@ -11,7 +11,8 @@ import (
 type Client struct {
 	conn    rdb.UniversalClient
 	codec   Codec
-	metrics *metrics
+	labels  map[string]string
+	metrics clientMetrics
 }
 
 // NewClient creates a standalone Redis client.
@@ -79,6 +80,15 @@ func (c *Client) Raw() rdb.UniversalClient {
 	return c.conn
 }
 
+// Labels returns a copy of the labels configured for wrapper-level metrics.
+func (c *Client) Labels() map[string]string {
+	if c == nil {
+		return nil
+	}
+
+	return maps.Clone(c.labels)
+}
+
 // Ping checks Redis availability.
 func (c *Client) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx).Err()
@@ -90,22 +100,22 @@ func (c *Client) Close() error {
 }
 
 func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
-	if err := applyTracing(conn, opts.traceOptions); err != nil {
-		_ = conn.Close()
-		return nil, err
+	client := &Client{
+		conn:   conn,
+		codec:  opts.codec,
+		labels: maps.Clone(opts.metricLabels),
 	}
 
-	return &Client{
-		conn:    conn,
-		codec:   opts.codec,
-		metrics: newClientMetrics(opts.metricLabels),
-	}, nil
-}
-
-func applyTracing(conn rdb.UniversalClient, traceOptions []redisotel.TracingOption) error {
-	if len(traceOptions) == 0 {
-		return nil
+	if opts.tracing != nil {
+		if err := opts.tracing.Instrument(client); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 	}
 
-	return redisotel.InstrumentTracing(conn, traceOptions...)
+	if opts.metrics != nil {
+		client.metrics = newClientMetrics(opts.metrics.Register(client))
+	}
+
+	return client, nil
 }

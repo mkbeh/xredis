@@ -9,13 +9,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/auth"
 	"github.com/redis/go-redis/v9/maintnotifications"
 	"github.com/redis/go-redis/v9/push"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Option configures xredis Client construction.
@@ -60,11 +57,10 @@ type options struct {
 	pushNotificationProcessor push.NotificationProcessor
 	maintNotificationsConfig  *maintnotifications.Config
 
-	// Wrapper metric labels.
+	// Observability.
+	metrics      Metrics
+	tracing      Tracing
 	metricLabels map[string]string
-
-	// Tracing.
-	traceOptions []redisotel.TracingOption
 }
 
 type credentialsOptions struct {
@@ -162,10 +158,6 @@ func (o *options) ringOptions() (*rdb.RingOptions, error) {
 	applyRingOptions(redisOpts, o)
 
 	return redisOpts, nil
-}
-
-func (o *options) addTraceOption(opt redisotel.TracingOption) {
-	o.traceOptions = append(o.traceOptions, opt)
 }
 
 // Config options.
@@ -384,81 +376,32 @@ func WithRingConsistentHash(fn func(shards []string) rdb.ConsistentHash) Option 
 	})
 }
 
-// Metrics options.
+// Observability options.
 
+// WithMetrics configures wrapper-level client metrics.
+func WithMetrics(metrics Metrics) Option {
+	return optionFunc(func(opts *options) {
+		if metrics != nil {
+			opts.metrics = metrics
+		}
+	})
+}
+
+// WithTracing configures client tracing instrumentation.
+func WithTracing(tracing Tracing) Option {
+	return optionFunc(func(opts *options) {
+		if tracing != nil {
+			opts.tracing = tracing
+		}
+	})
+}
+
+// WithMetricLabel configures a bounded label for wrapper-level client metrics.
 func WithMetricLabel(key, value string) Option {
 	return optionFunc(func(opts *options) {
 		if key == "" || strings.HasPrefix(key, "redis.client.") {
 			return
 		}
 		opts.metricLabels[key] = value
-	})
-}
-
-// Tracing options.
-
-// WithTracerProvider enables tracing and configures OpenTelemetry tracer provider.
-func WithTracerProvider(provider trace.TracerProvider) Option {
-	return optionFunc(func(opts *options) {
-		if provider != nil {
-			opts.addTraceOption(redisotel.WithTracerProvider(provider))
-		}
-	})
-}
-
-// WithTracingDBStatement controls whether raw Redis commands are recorded in spans.
-func WithTracingDBStatement(on bool) Option {
-	return optionFunc(func(opts *options) {
-		opts.addTraceOption(redisotel.WithDBStatement(on))
-	})
-}
-
-// WithTracingDBSystem configures db.system attribute for tracing.
-func WithTracingDBSystem(system string) Option {
-	return optionFunc(func(opts *options) {
-		if system != "" {
-			opts.addTraceOption(redisotel.WithDBSystem(system))
-		}
-	})
-}
-
-// WithTracingAttributes configures additional OpenTelemetry tracing attributes.
-func WithTracingAttributes(attrs ...attribute.KeyValue) Option {
-	return optionFunc(func(opts *options) {
-		if len(attrs) > 0 {
-			opts.addTraceOption(redisotel.WithAttributes(attrs...))
-		}
-	})
-}
-
-// WithTracingCommandFilter configures command filtering for Redis tracing.
-func WithTracingCommandFilter(filter func(cmd rdb.Cmder) bool) Option {
-	return optionFunc(func(opts *options) {
-		if filter != nil {
-			opts.addTraceOption(redisotel.WithCommandFilter(filter))
-		}
-	})
-}
-
-// WithTracingCommandsFilter configures pipeline command filtering for Redis tracing.
-func WithTracingCommandsFilter(filter func(cmds []rdb.Cmder) bool) Option {
-	return optionFunc(func(opts *options) {
-		if filter != nil {
-			opts.addTraceOption(redisotel.WithCommandsFilter(filter))
-		}
-	})
-}
-
-// WithTracingDialFilter enables or disables filtering of dial commands in tracing.
-func WithTracingDialFilter(on bool) Option {
-	return optionFunc(func(opts *options) {
-		opts.addTraceOption(redisotel.WithDialFilter(on))
-	})
-}
-
-// WithTracingCallerEnabled controls whether tracing records caller file and line.
-func WithTracingCallerEnabled(on bool) Option {
-	return optionFunc(func(opts *options) {
-		opts.addTraceOption(redisotel.WithCallerEnabled(on))
 	})
 }
