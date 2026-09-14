@@ -14,63 +14,48 @@ type Client struct {
 }
 
 // NewClient creates a standalone Redis client.
-func NewClient(opts ...Option) (*Client, error) {
-	options := newOptions(opts...)
-
-	redisOpts, err := options.clientOptions()
-	if err != nil {
-		return nil, err
+func NewClient(redisOpts *rdb.Options, opts ...Option) (*Client, error) {
+	if redisOpts == nil {
+		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewClient(redisOpts), options)
+	return newClient(rdb.NewClient(redisOpts), newOptions(opts...))
 }
 
 // NewClusterClient creates a Redis Cluster client.
-func NewClusterClient(opts ...Option) (*Client, error) {
-	options := newOptions(opts...)
-
-	redisOpts, err := options.clusterOptions()
-	if err != nil {
-		return nil, err
+func NewClusterClient(redisOpts *rdb.ClusterOptions, opts ...Option) (*Client, error) {
+	if redisOpts == nil {
+		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewClusterClient(redisOpts), options)
+	return newClient(rdb.NewClusterClient(redisOpts), newOptions(opts...))
 }
 
 // NewFailoverClient creates a Redis Sentinel / failover client.
-func NewFailoverClient(opts ...Option) (*Client, error) {
-	options := newOptions(opts...)
-
-	redisOpts, err := options.failoverOptions()
-	if err != nil {
-		return nil, err
+func NewFailoverClient(redisOpts *rdb.FailoverOptions, opts ...Option) (*Client, error) {
+	if redisOpts == nil {
+		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewFailoverClient(redisOpts), options)
+	return newClient(rdb.NewFailoverClient(redisOpts), newOptions(opts...))
 }
 
 // NewFailoverClusterClient creates a Redis Sentinel / failover cluster client.
-func NewFailoverClusterClient(opts ...Option) (*Client, error) {
-	options := newOptions(opts...)
-
-	redisOpts, err := options.failoverOptions()
-	if err != nil {
-		return nil, err
+func NewFailoverClusterClient(redisOpts *rdb.FailoverOptions, opts ...Option) (*Client, error) {
+	if redisOpts == nil {
+		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewFailoverClusterClient(redisOpts), options)
+	return newClient(rdb.NewFailoverClusterClient(redisOpts), newOptions(opts...))
 }
 
 // NewRing creates a Redis Ring client for client-side sharding.
-func NewRing(opts ...Option) (*Client, error) {
-	options := newOptions(opts...)
-
-	redisOpts, err := options.ringOptions()
-	if err != nil {
-		return nil, err
+func NewRing(redisOpts *rdb.RingOptions, opts ...Option) (*Client, error) {
+	if redisOpts == nil {
+		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewRing(redisOpts), options)
+	return newClient(rdb.NewRing(redisOpts), newOptions(opts...))
 }
 
 // Raw returns the underlying go-redis client.
@@ -88,7 +73,7 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
+func newClient(conn rdb.UniversalClient, opts options) (*Client, error) {
 	client := &Client{
 		conn:  conn,
 		codec: opts.codec,

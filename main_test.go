@@ -9,6 +9,7 @@ import (
 	. "github.com/bsm/ginkgo/v2"
 	. "github.com/bsm/gomega"
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -41,14 +42,14 @@ var _ = BeforeSuite(func() {
 
 func newTestClient() *xredis.Client {
 	client, err := xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
+		&rdb.Options{
 			Addr:         redisAddr,
 			DB:           testDB,
+			ClientName:   "xredis-test",
 			DialTimeout:  5 * time.Second,
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 5 * time.Second,
-		}),
-		xredis.WithClientName("xredis-test"),
+		},
 	)
 	Expect(err).NotTo(HaveOccurred())
 

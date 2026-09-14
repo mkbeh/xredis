@@ -7,6 +7,7 @@ import (
 	. "github.com/bsm/ginkgo/v2"
 	. "github.com/bsm/gomega"
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 var errPipelineCodec = errors.New("pipeline codec error")
@@ -217,11 +218,11 @@ var _ = Describe("Pipeline", func() {
 
 		It("returns codec errors without executing queued commands", func() {
 			codecClient, err := xredis.NewClient(
-				xredis.WithClientConfig(&xredis.ClientConfig{
-					Addr: redisAddr,
-					DB:   testDB,
-				}),
-				xredis.WithClientName("xredis-pipeline-codec-test"),
+				&rdb.Options{
+					Addr:       redisAddr,
+					DB:         testDB,
+					ClientName: "xredis-pipeline-codec-test",
+				},
 				xredis.WithCodec(failingPipelineCodec{}),
 			)
 			Expect(err).NotTo(HaveOccurred())

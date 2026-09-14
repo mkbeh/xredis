@@ -1,44 +1,60 @@
-package xredis
+package xredis_test
 
 import (
 	"context"
-	"testing"
 	"time"
+
+	. "github.com/bsm/ginkgo/v2"
+	. "github.com/bsm/gomega"
+	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 type testMetrics struct {
-	metrics ClientMetrics
+	metrics xredis.ClientMetrics
 	calls   int
 }
 
-func (m *testMetrics) Register() ClientMetrics {
+func (m *testMetrics) Register() xredis.ClientMetrics {
 	m.calls++
 
 	return m.metrics
 }
 
-type testCacheMetrics struct{}
+type testCacheMetrics struct {
+	requests int
+}
 
-func (*testCacheMetrics) RecordRequest(context.Context, string, string) {}
+func (m *testCacheMetrics) RecordRequest(context.Context, string, string) {
+	m.requests++
+}
 
 func (*testCacheMetrics) RecordLoaderDuration(context.Context, string, time.Duration) {}
 
 func (*testCacheMetrics) RecordSingleflightShared(context.Context) {}
 
-type testLockMetrics struct{}
+type testLockMetrics struct {
+	operations int
+}
 
-func (*testLockMetrics) RecordOperation(context.Context, string, string, string) {}
+func (m *testLockMetrics) RecordOperation(context.Context, string, string, string) {
+	m.operations++
+}
 
-type testRateLimiterMetrics struct{}
+type testRateLimiterMetrics struct {
+	decisions int
+}
 
-func (*testRateLimiterMetrics) RecordDecision(context.Context, string, string, time.Duration) {}
+func (m *testRateLimiterMetrics) RecordDecision(context.Context, string, string, time.Duration) {
+	m.decisions++
+}
 
 type testTracing struct {
-	client *Client
+	client *xredis.Client
 	calls  int
 }
 
-func (t *testTracing) Instrument(client *Client) error {
+func (t *testTracing) Instrument(client *xredis.Client) error {
 	t.client = client
 	t.calls++
 
@@ -46,84 +62,157 @@ func (t *testTracing) Instrument(client *Client) error {
 }
 
 var (
-	_ Metrics            = (*testMetrics)(nil)
-	_ CacheMetrics       = (*testCacheMetrics)(nil)
-	_ LockMetrics        = (*testLockMetrics)(nil)
-	_ RateLimiterMetrics = (*testRateLimiterMetrics)(nil)
-	_ Tracing            = (*testTracing)(nil)
+	_ xredis.Metrics            = (*testMetrics)(nil)
+	_ xredis.CacheMetrics       = (*testCacheMetrics)(nil)
+	_ xredis.LockMetrics        = (*testLockMetrics)(nil)
+	_ xredis.RateLimiterMetrics = (*testRateLimiterMetrics)(nil)
+	_ xredis.Tracing            = (*testTracing)(nil)
 )
 
-func TestClientObservability(t *testing.T) {
-	cacheMetrics := &testCacheMetrics{}
-	lockMetrics := &testLockMetrics{}
-	rateLimiterMetrics := &testRateLimiterMetrics{}
+var _ = Describe("Client observability", func() {
+	It("registers metrics and tracing once", func() {
+		cacheMetrics := &testCacheMetrics{}
+		lockMetrics := &testLockMetrics{}
+		rateLimiterMetrics := &testRateLimiterMetrics{}
 
-	metrics := &testMetrics{
-		metrics: ClientMetrics{
-			Cache:       cacheMetrics,
-			Lock:        lockMetrics,
-			RateLimiter: rateLimiterMetrics,
-		},
-	}
-	tracing := &testTracing{}
-
-	client, err := NewClient(
-		WithMetrics(metrics),
-		WithTracing(tracing),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if closeErr := client.Close(); closeErr != nil {
-			t.Fatal(closeErr)
+		metrics := &testMetrics{
+			metrics: xredis.ClientMetrics{
+				Cache:       cacheMetrics,
+				Lock:        lockMetrics,
+				RateLimiter: rateLimiterMetrics,
+			},
 		}
+		tracing := &testTracing{}
+
+		client, err := xredis.NewClient(
+			&rdb.Options{
+				Addr: redisAddr,
+				DB:   testDB,
+			},
+			xredis.WithMetrics(metrics),
+			xredis.WithTracing(tracing),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(client.Close()).To(Succeed())
+		})
+
+		Expect(metrics.calls).To(Equal(1))
+		Expect(tracing.calls).To(Equal(1))
+		Expect(tracing.client).To(BeIdenticalTo(client))
 	})
 
-	if metrics.calls != 1 {
-		t.Fatalf("unexpected metrics register calls: %d", metrics.calls)
-	}
+	It("routes wrapper metrics to their domains", func() {
+		cacheMetrics := &testCacheMetrics{}
+		lockMetrics := &testLockMetrics{}
+		rateLimiterMetrics := &testRateLimiterMetrics{}
 
-	if tracing.calls != 1 {
-		t.Fatalf("unexpected tracing instrument calls: %d", tracing.calls)
-	}
+		metrics := &testMetrics{
+			metrics: xredis.ClientMetrics{
+				Cache:       cacheMetrics,
+				Lock:        lockMetrics,
+				RateLimiter: rateLimiterMetrics,
+			},
+		}
 
-	if tracing.client != client {
-		t.Fatal("tracing instrumented unexpected client")
-	}
+		client, err := xredis.NewClient(
+			&rdb.Options{
+				Addr: redisAddr,
+				DB:   testDB,
+			},
+			xredis.WithMetrics(metrics),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(client.Close()).To(Succeed())
+		})
 
-	if client.metrics.cache.metrics != cacheMetrics {
-		t.Fatal("cache metrics were not attached to client")
-	}
+		Expect(client.Raw().FlushDB(ctx).Err()).To(Succeed())
 
-	if client.metrics.lock.metrics != lockMetrics {
-		t.Fatal("lock metrics were not attached to client")
-	}
+		cache, err := xredis.NewCache[string](
+			client,
+			xredis.WithCachePrefix("observability:cache:"),
+			xredis.WithCacheTTL(time.Minute),
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-	if client.metrics.rateLimiter.metrics != rateLimiterMetrics {
-		t.Fatal("rate limiter metrics were not attached to client")
-	}
-}
+		_, _, err = cache.Get(ctx, "missing")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cacheMetrics.requests).To(Equal(1))
 
-func TestClientMetricsPartial(t *testing.T) {
-	cacheMetrics := &testCacheMetrics{}
+		lock, acquired, err := client.TryLock(
+			ctx,
+			"observability:lock",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(lock.Unlock(ctx)).To(Succeed())
+		Expect(lockMetrics.operations).To(Equal(2))
 
-	metrics := newClientMetrics(ClientMetrics{
-		Cache: cacheMetrics,
+		limiter, err := xredis.NewRateLimiter(
+			client,
+			xredis.WithRateLimiterPrefix("observability:"),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		decision, err := limiter.AllowFixedWindow(
+			ctx,
+			"rate-limit",
+			xredis.RateLimit{
+				Limit:  1,
+				Window: time.Minute,
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decision.Allowed).To(BeTrue())
+		Expect(rateLimiterMetrics.decisions).To(Equal(1))
 	})
 
-	if metrics.cache.metrics != cacheMetrics {
-		t.Fatal("cache metrics were not attached")
-	}
+	It("supports partially configured metrics", func() {
+		metrics := &testMetrics{
+			metrics: xredis.ClientMetrics{
+				Cache: &testCacheMetrics{},
+			},
+		}
 
-	if metrics.lock.metrics != nil {
-		t.Fatal("lock metrics must be nil")
-	}
+		client, err := xredis.NewClient(
+			&rdb.Options{
+				Addr: redisAddr,
+				DB:   testDB,
+			},
+			xredis.WithMetrics(metrics),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(client.Close()).To(Succeed())
+		})
 
-	if metrics.rateLimiter.metrics != nil {
-		t.Fatal("rate limiter metrics must be nil")
-	}
+		Expect(client.Raw().FlushDB(ctx).Err()).To(Succeed())
 
-	metrics.lock.recordOperation(t.Context(), "", "", "")
-	metrics.rateLimiter.recordDecision(t.Context(), "", "", 0)
-}
+		lock, acquired, err := client.TryLock(
+			ctx,
+			"observability:partial:lock",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(lock.Unlock(ctx)).To(Succeed())
+
+		limiter, err := xredis.NewRateLimiter(
+			client,
+			xredis.WithRateLimiterPrefix("observability:partial:"),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = limiter.AllowFixedWindow(
+			ctx,
+			"rate-limit",
+			xredis.RateLimit{
+				Limit:  1,
+				Window: time.Minute,
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+	})
+})
