@@ -6,99 +6,93 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	redisotelnative "github.com/redis/go-redis/extra/redisotel-native/v9"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
-const instrumentationName = "github.com/mkbeh/xredis"
-
-const (
-	attrCacheOperation = "redis.client.cache.operation"
-	attrCacheResult    = "redis.client.cache.result"
-	attrLoaderOutcome  = "redis.client.cache.loader.outcome"
-
-	attrLockType      = "redis.client.lock.type"
-	attrLockOperation = "redis.client.lock.operation"
-	attrLockOutcome   = "redis.client.lock.outcome"
-
-	attrRateLimitAlgorithm = "redis.client.rate_limiter.algorithm"
-	attrRateLimitOutcome   = "redis.client.rate_limiter.outcome"
-)
-
-var cacheLoaderDurationBuckets = []float64{
-	0.005,
-	0.01,
-	0.025,
-	0.05,
-	0.075,
-	0.1,
-	0.25,
-	0.5,
-	0.75,
-	1,
-	2.5,
-	5,
-	7.5,
-	10,
-}
-
-var rateLimitDurationBuckets = []float64{
-	0.0001,
-	0.00025,
-	0.0005,
-	0.001,
-	0.0025,
-	0.005,
-	0.01,
-	0.025,
-	0.05,
-	0.1,
-	0.25,
-	0.5,
-	1,
-}
-
 // Metrics provides OpenTelemetry metrics for xredis wrapper-level operations
 // and manages native go-redis metrics instrumentation.
 //
-// A Metrics instance may be shared by multiple xredis clients. Shutdown must be
-// called once by the application after all clients stop using it.
+// A Metrics instance is immutable after initialization and may be shared by
+// multiple xredis clients.
 type Metrics struct {
-	cacheRequests           metric.Int64Counter
-	cacheLoaderDuration     metric.Float64Histogram
-	cacheSingleflightShared metric.Int64Counter
-	lockOperations          metric.Int64Counter
-	rateLimitDecisions      metric.Int64Counter
-	rateLimitDuration       metric.Float64Histogram
+	cache       cacheMetrics
+	lock        lockMetrics
+	rateLimiter rateLimiterMetrics
 
-	shutdownNative func() error
-	shutdownOnce   sync.Once
-	shutdownErr    error
+	shutdown func() error
 }
 
-var _ xredis.Metrics = (*Metrics)(nil)
+type cacheMetrics struct {
+	requests           metric.Int64Counter
+	loaderDuration     metric.Float64Histogram
+	singleflightShared metric.Int64Counter
+	attributes         metric.MeasurementOption
+}
 
-// Register creates wrapper-level metrics bound to client.
-func (m *Metrics) Register(client *xredis.Client) xredis.ClientMetrics {
+type lockMetrics struct {
+	operations metric.Int64Counter
+	attributes metric.MeasurementOption
+}
+
+type rateLimiterMetrics struct {
+	decisions  metric.Int64Counter
+	duration   metric.Float64Histogram
+	attributes metric.MeasurementOption
+}
+
+var (
+	_ xredis.Metrics            = (*Metrics)(nil)
+	_ xredis.CacheMetrics       = (*cacheMetrics)(nil)
+	_ xredis.LockMetrics        = (*lockMetrics)(nil)
+	_ xredis.RateLimiterMetrics = (*rateLimiterMetrics)(nil)
+)
+
+// InitMetrics initializes xredis wrapper-level metrics and native go-redis
+// metrics instrumentation.
+//
+// Call InitMetrics once during application startup before creating Redis
+// clients. The returned Metrics may be shared by multiple clients.
+func InitMetrics(opts ...MetricsOption) (*Metrics, error) {
+	cfg := defaultMetricsConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt.apply(&cfg)
+		}
+	}
+
+	provider := cfg.meterProvider
+	if provider == nil {
+		provider = otel.GetMeterProvider()
+	}
+
+	metrics, err := newMetrics(provider, &cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	shutdownNative, err := initNativeMetrics(provider, &cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	metrics.shutdown = sync.OnceValue(shutdownNative)
+
+	return metrics, nil
+}
+
+// Register returns wrapper-level metrics configured for this Metrics instance.
+func (m *Metrics) Register() xredis.ClientMetrics {
 	if m == nil {
 		return xredis.ClientMetrics{}
 	}
 
-	attributes := newAttributes(client.Labels())
-
 	return xredis.ClientMetrics{
-		Cache: &cacheMetrics{
-			metrics:    m,
-			attributes: attributes,
-		},
-		Lock: &lockMetrics{
-			metrics:    m,
-			attributes: attributes,
-		},
-		RateLimiter: &rateLimiterMetrics{
-			metrics:    m,
-			attributes: attributes,
-		},
+		Cache:       &m.cache,
+		Lock:        &m.lock,
+		RateLimiter: &m.rateLimiter,
 	}
 }
 
@@ -107,201 +101,137 @@ func (m *Metrics) Register(client *xredis.Client) xredis.ClientMetrics {
 // Shutdown is idempotent. It does not shut down the configured OpenTelemetry
 // MeterProvider; the application remains responsible for that lifecycle.
 func (m *Metrics) Shutdown() error {
-	if m == nil {
+	if m == nil || m.shutdown == nil {
 		return nil
 	}
 
-	m.shutdownOnce.Do(func() {
-		if m.shutdownNative != nil {
-			m.shutdownErr = m.shutdownNative()
-		}
-	})
-
-	return m.shutdownErr
+	return m.shutdown()
 }
 
-type cacheMetrics struct {
-	metrics    *Metrics
-	attributes attribute.Set
-}
-
-var _ xredis.CacheMetrics = (*cacheMetrics)(nil)
-
-func (m *cacheMetrics) RecordRequest(
-	ctx context.Context,
-	operation,
-	result string,
-) {
-	m.metrics.cacheRequests.Add(
+func (m *cacheMetrics) RecordRequest(ctx context.Context, operation, result string) {
+	m.requests.Add(
 		ctx,
 		1,
-		metric.WithAttributeSet(m.attributes),
+		m.attributes,
 		metric.WithAttributes(
-			attribute.String(attrCacheOperation, operation),
-			attribute.String(attrCacheResult, result),
+			attrCacheOperation.String(operation),
+			attrCacheResult.String(result),
 		),
 	)
 }
 
-func (m *cacheMetrics) RecordLoaderDuration(
-	ctx context.Context,
-	outcome string,
-	duration time.Duration,
-) {
-	m.metrics.cacheLoaderDuration.Record(
+func (m *cacheMetrics) RecordLoaderDuration(ctx context.Context, outcome string, duration time.Duration) {
+	m.loaderDuration.Record(
 		ctx,
 		duration.Seconds(),
-		metric.WithAttributeSet(m.attributes),
+		m.attributes,
 		metric.WithAttributes(
-			attribute.String(attrLoaderOutcome, outcome),
+			attrCacheLoaderOutcome.String(outcome),
 		),
 	)
 }
 
 func (m *cacheMetrics) RecordSingleflightShared(ctx context.Context) {
-	m.metrics.cacheSingleflightShared.Add(
+	m.singleflightShared.Add(ctx, 1, m.attributes)
+}
+
+func (m *lockMetrics) RecordOperation(ctx context.Context, lockType, operation, outcome string) {
+	m.operations.Add(
 		ctx,
 		1,
-		metric.WithAttributeSet(m.attributes),
-	)
-}
-
-type lockMetrics struct {
-	metrics    *Metrics
-	attributes attribute.Set
-}
-
-var _ xredis.LockMetrics = (*lockMetrics)(nil)
-
-func (m *lockMetrics) RecordOperation(
-	ctx context.Context,
-	lockType,
-	operation,
-	outcome string,
-) {
-	m.metrics.lockOperations.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
+		m.attributes,
 		metric.WithAttributes(
-			attribute.String(attrLockType, lockType),
-			attribute.String(attrLockOperation, operation),
-			attribute.String(attrLockOutcome, outcome),
+			attrLockType.String(lockType),
+			attrLockOperation.String(operation),
+			attrLockOutcome.String(outcome),
 		),
 	)
 }
 
-type rateLimiterMetrics struct {
-	metrics    *Metrics
-	attributes attribute.Set
+func (m *rateLimiterMetrics) RecordDecision(ctx context.Context, algorithm, outcome string, duration time.Duration) {
+	attributes := metric.WithAttributes(
+		attrRateLimiterAlgorithm.String(algorithm),
+		attrRateLimiterOutcome.String(outcome),
+	)
+
+	m.decisions.Add(ctx, 1, m.attributes, attributes)
+	m.duration.Record(ctx, duration.Seconds(), m.attributes, attributes)
 }
 
-var _ xredis.RateLimiterMetrics = (*rateLimiterMetrics)(nil)
-
-func (m *rateLimiterMetrics) RecordDecision(
-	ctx context.Context,
-	algorithm,
-	outcome string,
-	duration time.Duration,
-) {
-	options := []metric.RecordOption{
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(attrRateLimitAlgorithm, algorithm),
-			attribute.String(attrRateLimitOutcome, outcome),
-		),
-	}
-
-	m.metrics.rateLimitDecisions.Add(
-		ctx,
-		1,
-		metric.WithAttributeSet(m.attributes),
-		metric.WithAttributes(
-			attribute.String(attrRateLimitAlgorithm, algorithm),
-			attribute.String(attrRateLimitOutcome, outcome),
-		),
+func newMetrics(provider metric.MeterProvider, cfg *metricsConfig) (*Metrics, error) {
+	meter := provider.Meter(
+		ScopeName,
+		metric.WithInstrumentationVersion(Version()),
 	)
 
-	m.metrics.rateLimitDuration.Record(
-		ctx,
-		duration.Seconds(),
-		options...,
-	)
-}
+	attributes := metric.WithAttributeSet(attributesFromConfig(cfg))
 
-func newMetrics(provider metric.MeterProvider) (*Metrics, error) {
-	meter := provider.Meter(instrumentationName)
-
-	cacheRequests, err := meter.Int64Counter(
-		"redis.client.cache.requests",
-		metric.WithDescription("Number of Redis cache requests."),
-	)
+	cache, err := newCacheMetrics(meter, attributes)
 	if err != nil {
 		return nil, err
 	}
 
-	cacheLoaderDuration, err := meter.Float64Histogram(
-		"redis.client.cache.loader.duration",
-		metric.WithDescription("Duration of Redis cache loader executions."),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(cacheLoaderDurationBuckets...),
-	)
+	lock, err := newLockMetrics(meter, attributes)
 	if err != nil {
 		return nil, err
 	}
 
-	cacheSingleflightShared, err := meter.Int64Counter(
-		"redis.client.cache.singleflight.shared",
-		metric.WithDescription(
-			"Number of Redis cache requests that shared a singleflight result.",
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	lockOperations, err := meter.Int64Counter(
-		"redis.client.lock.operations",
-		metric.WithDescription("Number of Redis lock operations."),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rateLimitDecisions, err := meter.Int64Counter(
-		"redis.client.rate_limiter.decisions",
-		metric.WithDescription("Number of Redis rate limiter decisions."),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rateLimitDuration, err := meter.Float64Histogram(
-		"redis.client.rate_limiter.duration",
-		metric.WithDescription("Duration of Redis rate limiter decisions."),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(rateLimitDurationBuckets...),
-	)
+	rateLimiter, err := newRateLimiterMetrics(meter, attributes)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Metrics{
-		cacheRequests:           cacheRequests,
-		cacheLoaderDuration:     cacheLoaderDuration,
-		cacheSingleflightShared: cacheSingleflightShared,
-		lockOperations:          lockOperations,
-		rateLimitDecisions:      rateLimitDecisions,
-		rateLimitDuration:       rateLimitDuration,
+		cache:       cache,
+		lock:        lock,
+		rateLimiter: rateLimiter,
 	}, nil
 }
 
-func newAttributes(labels map[string]string) attribute.Set {
-	attrs := make([]attribute.KeyValue, 0, len(labels))
-
-	for key, value := range labels {
+func attributesFromConfig(cfg *metricsConfig) attribute.Set {
+	attrs := make([]attribute.KeyValue, 0, len(cfg.labels)+1)
+	for key, value := range cfg.labels {
 		attrs = append(attrs, attribute.String(key, value))
 	}
 
+	if cfg.clientID != "" {
+		attrs = append(attrs, attrClientID.String(cfg.clientID))
+	}
+
 	return attribute.NewSet(attrs...)
+}
+
+func initNativeMetrics(
+	provider metric.MeterProvider,
+	cfg *metricsConfig,
+) (func() error, error) {
+	nativeCfg := redisotelnative.NewConfig().
+		WithEnabled(true).
+		WithMeterProvider(provider).
+		WithMetricGroups(cfg.metricGroups).
+		WithHidePubSubChannelNames(cfg.hidePubSubChannelNames).
+		WithHideStreamNames(cfg.hideStreamNames)
+
+	if len(cfg.includeCommands) > 0 {
+		nativeCfg.WithIncludeCommands(cfg.includeCommands)
+	}
+
+	if len(cfg.excludeCommands) > 0 {
+		nativeCfg.WithExcludeCommands(cfg.excludeCommands)
+	}
+
+	if cfg.histogramAggregationSet {
+		nativeCfg.WithHistogramAggregation(cfg.histogramAggregation)
+	}
+
+	if len(cfg.histogramBuckets) > 0 {
+		nativeCfg.WithHistogramBuckets(cfg.histogramBuckets)
+	}
+
+	instance := redisotelnative.GetObservabilityInstance()
+	if err := instance.Init(nativeCfg); err != nil {
+		return nil, err
+	}
+
+	return instance.Shutdown, nil
 }

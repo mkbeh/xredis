@@ -1,9 +1,14 @@
 package otelxredistrace
 
 import (
+	"slices"
+
 	"github.com/mkbeh/xredis"
 	"github.com/redis/go-redis/extra/redisotel/v9"
+	"go.opentelemetry.io/otel/attribute"
 )
+
+const attrClientID attribute.Key = "xredis.client.id"
 
 // Tracing provides OpenTelemetry tracing instrumentation for xredis clients.
 //
@@ -17,7 +22,7 @@ var _ xredis.Tracing = (*Tracing)(nil)
 
 // New creates reusable OpenTelemetry tracing instrumentation.
 func New(opts ...TracingOption) *Tracing {
-	cfg := tracingConfig{}
+	cfg := defaultTracingConfig()
 
 	for _, opt := range opts {
 		if opt != nil {
@@ -25,8 +30,13 @@ func New(opts ...TracingOption) *Tracing {
 		}
 	}
 
+	options := slices.Clone(cfg.options)
+	if attributes := attributesFromConfig(&cfg); len(attributes) > 0 {
+		options = append(options, redisotel.WithAttributes(attributes...))
+	}
+
 	return &Tracing{
-		options: append([]redisotel.TracingOption(nil), cfg.options...),
+		options: options,
 	}
 }
 
@@ -37,4 +47,22 @@ func (t *Tracing) Instrument(client *xredis.Client) error {
 	}
 
 	return redisotel.InstrumentTracing(client.Raw(), t.options...)
+}
+
+func attributesFromConfig(cfg *tracingConfig) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(cfg.labels)+len(cfg.attributes)+1)
+
+	for key, value := range cfg.labels {
+		attrs = append(attrs, attribute.String(key, value))
+	}
+
+	attrs = append(attrs, cfg.attributes...)
+
+	if cfg.clientID != "" {
+		attrs = append(attrs, attrClientID.String(cfg.clientID))
+	}
+
+	set := attribute.NewSet(attrs...)
+
+	return set.ToSlice()
 }

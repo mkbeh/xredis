@@ -1,6 +1,8 @@
 package otelxredistrace
 
 import (
+	"slices"
+
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	rdb "github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,7 +21,16 @@ func (f tracingOptionFunc) apply(cfg *tracingConfig) {
 }
 
 type tracingConfig struct {
-	options []redisotel.TracingOption
+	clientID   string
+	labels     map[string]string
+	attributes []attribute.KeyValue
+	options    []redisotel.TracingOption
+}
+
+func defaultTracingConfig() tracingConfig {
+	return tracingConfig{
+		labels: make(map[string]string),
+	}
 }
 
 func (c *tracingConfig) add(opt redisotel.TracingOption) {
@@ -31,6 +42,38 @@ func WithTracerProvider(provider trace.TracerProvider) TracingOption {
 	return tracingOptionFunc(func(cfg *tracingConfig) {
 		if provider != nil {
 			cfg.add(redisotel.WithTracerProvider(provider))
+		}
+	})
+}
+
+// WithClientID configures the client identity attribute for Redis spans.
+func WithClientID(id string) TracingOption {
+	return tracingOptionFunc(func(cfg *tracingConfig) {
+		if id != "" {
+			cfg.clientID = id
+		}
+	})
+}
+
+// WithLabel adds a string attribute to Redis spans.
+func WithLabel(key, value string) TracingOption {
+	return tracingOptionFunc(func(cfg *tracingConfig) {
+		if key != "" {
+			cfg.labels[key] = value
+		}
+	})
+}
+
+// WithLabels adds string attributes to Redis spans.
+//
+// Labels are merged with previously configured labels. When the same key is
+// configured more than once, the last value wins.
+func WithLabels(labels map[string]string) TracingOption {
+	return tracingOptionFunc(func(cfg *tracingConfig) {
+		for key, value := range labels {
+			if key != "" {
+				cfg.labels[key] = value
+			}
 		}
 	})
 }
@@ -54,9 +97,7 @@ func WithDBSystem(system string) TracingOption {
 // WithAttributes configures additional tracing attributes.
 func WithAttributes(attrs ...attribute.KeyValue) TracingOption {
 	return tracingOptionFunc(func(cfg *tracingConfig) {
-		if len(attrs) > 0 {
-			cfg.add(redisotel.WithAttributes(attrs...))
-		}
+		cfg.attributes = append(cfg.attributes, slices.Clone(attrs)...)
 	})
 }
 

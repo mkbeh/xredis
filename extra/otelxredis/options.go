@@ -1,6 +1,8 @@
 package otelxredis
 
 import (
+	"slices"
+
 	redisotelnative "github.com/redis/go-redis/extra/redisotel-native/v9"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -60,7 +62,10 @@ func (f metricsOptionFunc) apply(cfg *metricsConfig) {
 }
 
 type metricsConfig struct {
-	meterProvider           metric.MeterProvider
+	meterProvider metric.MeterProvider
+	clientID      string
+	labels        map[string]string
+
 	metricGroups            RedisMetricGroupFlags
 	includeCommands         []string
 	excludeCommands         []string
@@ -71,12 +76,55 @@ type metricsConfig struct {
 	histogramBuckets        []float64
 }
 
+func defaultMetricsConfig() metricsConfig {
+	return metricsConfig{
+		labels:                 make(map[string]string),
+		metricGroups:           RedisMetricGroupDefault,
+		hidePubSubChannelNames: true,
+		hideStreamNames:        true,
+	}
+}
+
 // WithMeterProvider configures the OpenTelemetry meter provider used by native
 // go-redis and xredis wrapper-level metrics.
 func WithMeterProvider(provider metric.MeterProvider) MetricsOption {
 	return metricsOptionFunc(func(cfg *metricsConfig) {
 		if provider != nil {
 			cfg.meterProvider = provider
+		}
+	})
+}
+
+// WithClientID configures the client identity attribute for wrapper-level metrics.
+func WithClientID(id string) MetricsOption {
+	return metricsOptionFunc(func(cfg *metricsConfig) {
+		if id != "" {
+			cfg.clientID = id
+		}
+	})
+}
+
+// WithLabel adds a string attribute to wrapper-level metrics.
+//
+// Prefer stable, low-cardinality values.
+func WithLabel(key, value string) MetricsOption {
+	return metricsOptionFunc(func(cfg *metricsConfig) {
+		if key != "" {
+			cfg.labels[key] = value
+		}
+	})
+}
+
+// WithLabels adds string attributes to wrapper-level metrics.
+//
+// Labels are merged with previously configured labels. When the same key is
+// configured more than once, the last value wins.
+func WithLabels(labels map[string]string) MetricsOption {
+	return metricsOptionFunc(func(cfg *metricsConfig) {
+		for key, value := range labels {
+			if key != "" {
+				cfg.labels[key] = value
+			}
 		}
 	})
 }
@@ -91,14 +139,14 @@ func WithRedisMetricGroups(groups RedisMetricGroupFlags) MetricsOption {
 // WithRedisMetricIncludeCommands configures Redis command allow-list for native metrics.
 func WithRedisMetricIncludeCommands(commands ...string) MetricsOption {
 	return metricsOptionFunc(func(cfg *metricsConfig) {
-		cfg.includeCommands = append([]string(nil), commands...)
+		cfg.includeCommands = slices.Clone(commands)
 	})
 }
 
 // WithRedisMetricExcludeCommands configures Redis command deny-list for native metrics.
 func WithRedisMetricExcludeCommands(commands ...string) MetricsOption {
 	return metricsOptionFunc(func(cfg *metricsConfig) {
-		cfg.excludeCommands = append([]string(nil), commands...)
+		cfg.excludeCommands = slices.Clone(commands)
 	})
 }
 
@@ -127,6 +175,6 @@ func WithRedisMetricHistogramAggregation(aggregation RedisHistogramAggregation) 
 // WithRedisMetricHistogramBuckets configures native Redis metric histogram bucket boundaries in seconds.
 func WithRedisMetricHistogramBuckets(buckets ...float64) MetricsOption {
 	return metricsOptionFunc(func(cfg *metricsConfig) {
-		cfg.histogramBuckets = append([]float64(nil), buckets...)
+		cfg.histogramBuckets = slices.Clone(buckets)
 	})
 }

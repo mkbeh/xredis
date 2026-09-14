@@ -5,13 +5,10 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"strings"
 	"time"
-	"uuid"
 
 	rdb "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/auth"
-	"github.com/redis/go-redis/v9/maintnotifications"
 	"github.com/redis/go-redis/v9/push"
 )
 
@@ -30,7 +27,7 @@ type options struct {
 	cfg any
 
 	// Client identity.
-	clientID       string
+	clientName     string
 	identitySuffix string
 
 	// Runtime dependencies.
@@ -53,14 +50,12 @@ type options struct {
 	ringHeartbeatFn    func(ctx context.Context, client *rdb.Client) bool
 	ringConsistentHash func(shards []string) rdb.ConsistentHash
 
-	// Push and maintenance notifications.
+	// Push notifications.
 	pushNotificationProcessor push.NotificationProcessor
-	maintNotificationsConfig  *maintnotifications.Config
 
 	// Observability.
-	metrics      Metrics
-	tracing      Tracing
-	metricLabels map[string]string
+	metrics Metrics
+	tracing Tracing
 }
 
 type credentialsOptions struct {
@@ -71,18 +66,13 @@ type credentialsOptions struct {
 
 func newOptions(opts ...Option) *options {
 	options := &options{
-		codec:        JSONCodec{},
-		metricLabels: make(map[string]string),
+		codec: JSONCodec{},
 	}
 
 	for _, opt := range opts {
 		if opt != nil {
 			opt.apply(options)
 		}
-	}
-
-	if options.clientID == "" {
-		options.clientID = uuid.NewV4().String()
 	}
 
 	if options.codec == nil {
@@ -198,13 +188,13 @@ func WithRingConfig(cfg *RingConfig) Option {
 	})
 }
 
-// Identity and logging options.
+// Identity options.
 
-// WithClientID configures Redis client name and logging client_id.
-func WithClientID(id string) Option {
+// WithClientName configures the Redis client name.
+func WithClientName(name string) Option {
 	return optionFunc(func(opts *options) {
-		if id != "" {
-			opts.clientID = id
+		if name != "" {
+			opts.clientName = name
 		}
 	})
 }
@@ -327,22 +317,13 @@ func WithClusterSlots(fn func(context.Context) ([]rdb.ClusterSlot, error)) Optio
 	})
 }
 
-// Push and maintenance notification options.
+// Push notification options.
 
 // WithPushNotificationProcessor configures Redis push notification processor.
 func WithPushNotificationProcessor(processor push.NotificationProcessor) Option {
 	return optionFunc(func(opts *options) {
 		if processor != nil {
 			opts.pushNotificationProcessor = processor
-		}
-	})
-}
-
-// WithMaintNotificationsConfig configures Redis maintenance notifications.
-func WithMaintNotificationsConfig(cfg *maintnotifications.Config) Option {
-	return optionFunc(func(opts *options) {
-		if cfg != nil {
-			opts.maintNotificationsConfig = cfg
 		}
 	})
 }
@@ -393,15 +374,5 @@ func WithTracing(tracing Tracing) Option {
 		if tracing != nil {
 			opts.tracing = tracing
 		}
-	})
-}
-
-// WithMetricLabel configures a bounded label for wrapper-level client metrics.
-func WithMetricLabel(key, value string) Option {
-	return optionFunc(func(opts *options) {
-		if key == "" || strings.HasPrefix(key, "redis.client.") {
-			return
-		}
-		opts.metricLabels[key] = value
 	})
 }

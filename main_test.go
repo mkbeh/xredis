@@ -48,7 +48,7 @@ func newTestClient() *xredis.Client {
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 5 * time.Second,
 		}),
-		xredis.WithClientID("xredis-test"),
+		xredis.WithClientName("xredis-test"),
 	)
 	Expect(err).NotTo(HaveOccurred())
 

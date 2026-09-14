@@ -420,7 +420,7 @@ func (c *Cache[T]) runLoader(
 	loader Loader[T],
 ) (T, error) {
 	start := time.Now()
-	outcome := loaderOutcomeError
+	outcome := cacheLoaderOutcomeError
 
 	defer func() {
 		c.client.metrics.cache.recordLoaderDuration(
@@ -434,10 +434,10 @@ func (c *Cache[T]) runLoader(
 
 	switch {
 	case err == nil:
-		outcome = loaderOutcomeSuccess
+		outcome = cacheLoaderOutcomeSuccess
 
 	case c.isNotFound(err):
-		outcome = loaderOutcomeNotFound
+		outcome = cacheLoaderOutcomeNotFound
 	}
 
 	return value, err

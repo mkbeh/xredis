@@ -10,6 +10,7 @@ import (
 
 	rdb "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/auth"
+	"github.com/redis/go-redis/v9/maintnotifications"
 )
 
 // Configuration types.
@@ -74,6 +75,15 @@ type ClientConfig struct {
 	// WriteBufferSize defines Redis write buffer size per connection.
 	WriteBufferSize int
 
+	// PipelineReadBufferSize defines the read buffer size for pipeline connections.
+	PipelineReadBufferSize int
+
+	// PipelineWriteBufferSize defines the write buffer size for pipeline connections.
+	PipelineWriteBufferSize int
+
+	// PipelinePoolSize defines the size of the dedicated pipeline connection pool.
+	PipelinePoolSize int
+
 	// PoolFIFO enables FIFO pool mode instead of default LIFO mode.
 	PoolFIFO bool
 
@@ -112,6 +122,9 @@ type ClientConfig struct {
 
 	// FailingTimeoutSeconds defines how long node is avoided after failure.
 	FailingTimeoutSeconds int
+
+	// MaintNotificationsConfig configures Redis maintenance notifications.
+	MaintNotificationsConfig *maintnotifications.Config
 }
 
 // ClusterConfig configures a Redis Cluster client.
@@ -177,6 +190,15 @@ type ClusterConfig struct {
 	// WriteBufferSize defines Redis write buffer size per connection.
 	WriteBufferSize int
 
+	// PipelineReadBufferSize defines the read buffer size for pipeline connections.
+	PipelineReadBufferSize int
+
+	// PipelineWriteBufferSize defines the write buffer size for pipeline connections.
+	PipelineWriteBufferSize int
+
+	// PipelinePoolSize defines the size of the dedicated pipeline connection pool.
+	PipelinePoolSize int
+
 	// PoolFIFO enables FIFO pool mode instead of default LIFO mode.
 	PoolFIFO bool
 
@@ -215,6 +237,9 @@ type ClusterConfig struct {
 
 	// FailingTimeoutSeconds defines how long cluster node is avoided after failure.
 	FailingTimeoutSeconds int
+
+	// MaintNotificationsConfig configures Redis maintenance notifications.
+	MaintNotificationsConfig *maintnotifications.Config
 
 	// DisableRoutingPolicies disables experimental cluster routing policies.
 	DisableRoutingPolicies bool
@@ -297,6 +322,15 @@ type FailoverConfig struct {
 
 	// WriteBufferSize defines Redis write buffer size per connection.
 	WriteBufferSize int
+
+	// PipelineReadBufferSize defines the read buffer size for pipeline connections.
+	PipelineReadBufferSize int
+
+	// PipelineWriteBufferSize defines the write buffer size for pipeline connections.
+	PipelineWriteBufferSize int
+
+	// PipelinePoolSize defines the size of the dedicated pipeline connection pool.
+	PipelinePoolSize int
 
 	// PoolFIFO enables FIFO pool mode instead of default LIFO mode.
 	PoolFIFO bool
@@ -391,6 +425,15 @@ type RingConfig struct {
 	// WriteBufferSize defines Redis write buffer size per connection.
 	WriteBufferSize int
 
+	// PipelineReadBufferSize defines the read buffer size for pipeline connections.
+	PipelineReadBufferSize int
+
+	// PipelineWriteBufferSize defines the write buffer size for pipeline connections.
+	PipelineWriteBufferSize int
+
+	// PipelinePoolSize defines the size of the dedicated pipeline connection pool.
+	PipelinePoolSize int
+
 	// PoolFIFO enables FIFO pool mode instead of default LIFO mode.
 	PoolFIFO bool
 
@@ -433,37 +476,41 @@ func parseClientConfig(cfg *ClientConfig) (*rdb.Options, error) {
 	}
 
 	redisOpts := &rdb.Options{
-		Network:               cfg.Network,
-		Addr:                  cfg.Addr,
-		NodeAddress:           cfg.NodeAddress,
-		Protocol:              cfg.Protocol,
-		Username:              cfg.Username,
-		Password:              cfg.Password,
-		DB:                    cfg.DB,
-		MaxRetries:            cfg.MaxRetries,
-		MinRetryBackoff:       cfg.MinRetryBackoff,
-		MaxRetryBackoff:       cfg.MaxRetryBackoff,
-		DialTimeout:           cfg.DialTimeout,
-		DialerRetries:         cfg.DialerRetries,
-		DialerRetryTimeout:    cfg.DialerRetryTimeout,
-		ReadTimeout:           cfg.ReadTimeout,
-		WriteTimeout:          cfg.WriteTimeout,
-		ContextTimeoutEnabled: cfg.ContextTimeoutEnabled,
-		ReadBufferSize:        cfg.ReadBufferSize,
-		WriteBufferSize:       cfg.WriteBufferSize,
-		PoolFIFO:              cfg.PoolFIFO,
-		PoolSize:              cfg.PoolSize,
-		MaxConcurrentDials:    cfg.MaxConcurrentDials,
-		PoolTimeout:           cfg.PoolTimeout,
-		MinIdleConns:          cfg.MinIdleConns,
-		MaxIdleConns:          cfg.MaxIdleConns,
-		MaxActiveConns:        cfg.MaxActiveConns,
-		ConnMaxIdleTime:       cfg.ConnMaxIdleTime,
-		ConnMaxLifetime:       cfg.ConnMaxLifetime,
-		ConnMaxLifetimeJitter: cfg.ConnMaxLifetimeJitter,
-		DisableIdentity:       cfg.DisableIdentity,
-		IdentitySuffix:        cfg.IdentitySuffix,
-		FailingTimeoutSeconds: cfg.FailingTimeoutSeconds,
+		Network:                  cfg.Network,
+		Addr:                     cfg.Addr,
+		NodeAddress:              cfg.NodeAddress,
+		Protocol:                 cfg.Protocol,
+		Username:                 cfg.Username,
+		Password:                 cfg.Password,
+		DB:                       cfg.DB,
+		MaxRetries:               cfg.MaxRetries,
+		MinRetryBackoff:          cfg.MinRetryBackoff,
+		MaxRetryBackoff:          cfg.MaxRetryBackoff,
+		DialTimeout:              cfg.DialTimeout,
+		DialerRetries:            cfg.DialerRetries,
+		DialerRetryTimeout:       cfg.DialerRetryTimeout,
+		ReadTimeout:              cfg.ReadTimeout,
+		WriteTimeout:             cfg.WriteTimeout,
+		ContextTimeoutEnabled:    cfg.ContextTimeoutEnabled,
+		ReadBufferSize:           cfg.ReadBufferSize,
+		WriteBufferSize:          cfg.WriteBufferSize,
+		PipelineReadBufferSize:   cfg.PipelineReadBufferSize,
+		PipelineWriteBufferSize:  cfg.PipelineWriteBufferSize,
+		PipelinePoolSize:         cfg.PipelinePoolSize,
+		PoolFIFO:                 cfg.PoolFIFO,
+		PoolSize:                 cfg.PoolSize,
+		MaxConcurrentDials:       cfg.MaxConcurrentDials,
+		PoolTimeout:              cfg.PoolTimeout,
+		MinIdleConns:             cfg.MinIdleConns,
+		MaxIdleConns:             cfg.MaxIdleConns,
+		MaxActiveConns:           cfg.MaxActiveConns,
+		ConnMaxIdleTime:          cfg.ConnMaxIdleTime,
+		ConnMaxLifetime:          cfg.ConnMaxLifetime,
+		ConnMaxLifetimeJitter:    cfg.ConnMaxLifetimeJitter,
+		DisableIdentity:          cfg.DisableIdentity,
+		IdentitySuffix:           cfg.IdentitySuffix,
+		FailingTimeoutSeconds:    cfg.FailingTimeoutSeconds,
+		MaintNotificationsConfig: cfg.MaintNotificationsConfig,
 	}
 
 	return redisOpts, nil
@@ -499,6 +546,9 @@ func parseClusterConfig(cfg *ClusterConfig) (*rdb.ClusterOptions, error) {
 		ContextTimeoutEnabled:      cfg.ContextTimeoutEnabled,
 		ReadBufferSize:             cfg.ReadBufferSize,
 		WriteBufferSize:            cfg.WriteBufferSize,
+		PipelineReadBufferSize:     cfg.PipelineReadBufferSize,
+		PipelineWriteBufferSize:    cfg.PipelineWriteBufferSize,
+		PipelinePoolSize:           cfg.PipelinePoolSize,
 		PoolFIFO:                   cfg.PoolFIFO,
 		PoolSize:                   cfg.PoolSize,
 		MaxConcurrentDials:         cfg.MaxConcurrentDials,
@@ -512,6 +562,7 @@ func parseClusterConfig(cfg *ClusterConfig) (*rdb.ClusterOptions, error) {
 		DisableIdentity:            cfg.DisableIdentity,
 		IdentitySuffix:             cfg.IdentitySuffix,
 		FailingTimeoutSeconds:      cfg.FailingTimeoutSeconds,
+		MaintNotificationsConfig:   cfg.MaintNotificationsConfig,
 		DisableRoutingPolicies:     cfg.DisableRoutingPolicies,
 		ClusterStateReloadInterval: cfg.ClusterStateReloadInterval,
 	}
@@ -557,6 +608,9 @@ func parseFailoverConfig(cfg *FailoverConfig) (*rdb.FailoverOptions, error) {
 		ContextTimeoutEnabled:   cfg.ContextTimeoutEnabled,
 		ReadBufferSize:          cfg.ReadBufferSize,
 		WriteBufferSize:         cfg.WriteBufferSize,
+		PipelineReadBufferSize:  cfg.PipelineReadBufferSize,
+		PipelineWriteBufferSize: cfg.PipelineWriteBufferSize,
+		PipelinePoolSize:        cfg.PipelinePoolSize,
 		PoolFIFO:                cfg.PoolFIFO,
 		PoolSize:                cfg.PoolSize,
 		MaxConcurrentDials:      cfg.MaxConcurrentDials,
@@ -582,34 +636,37 @@ func parseRingConfig(cfg *RingConfig) (*rdb.RingOptions, error) {
 	}
 
 	redisOpts := &rdb.RingOptions{
-		Addrs:                 addrs,
-		HeartbeatFrequency:    cfg.HeartbeatFrequency,
-		Protocol:              cfg.Protocol,
-		Username:              cfg.Username,
-		Password:              cfg.Password,
-		DB:                    cfg.DB,
-		MaxRetries:            cfg.MaxRetries,
-		MinRetryBackoff:       cfg.MinRetryBackoff,
-		MaxRetryBackoff:       cfg.MaxRetryBackoff,
-		DialTimeout:           cfg.DialTimeout,
-		DialerRetries:         cfg.DialerRetries,
-		DialerRetryTimeout:    cfg.DialerRetryTimeout,
-		ReadTimeout:           cfg.ReadTimeout,
-		WriteTimeout:          cfg.WriteTimeout,
-		ContextTimeoutEnabled: cfg.ContextTimeoutEnabled,
-		ReadBufferSize:        cfg.ReadBufferSize,
-		WriteBufferSize:       cfg.WriteBufferSize,
-		PoolFIFO:              cfg.PoolFIFO,
-		PoolSize:              cfg.PoolSize,
-		PoolTimeout:           cfg.PoolTimeout,
-		MinIdleConns:          cfg.MinIdleConns,
-		MaxIdleConns:          cfg.MaxIdleConns,
-		MaxActiveConns:        cfg.MaxActiveConns,
-		ConnMaxIdleTime:       cfg.ConnMaxIdleTime,
-		ConnMaxLifetime:       cfg.ConnMaxLifetime,
-		ConnMaxLifetimeJitter: cfg.ConnMaxLifetimeJitter,
-		DisableIdentity:       cfg.DisableIdentity,
-		IdentitySuffix:        cfg.IdentitySuffix,
+		Addrs:                   addrs,
+		HeartbeatFrequency:      cfg.HeartbeatFrequency,
+		Protocol:                cfg.Protocol,
+		Username:                cfg.Username,
+		Password:                cfg.Password,
+		DB:                      cfg.DB,
+		MaxRetries:              cfg.MaxRetries,
+		MinRetryBackoff:         cfg.MinRetryBackoff,
+		MaxRetryBackoff:         cfg.MaxRetryBackoff,
+		DialTimeout:             cfg.DialTimeout,
+		DialerRetries:           cfg.DialerRetries,
+		DialerRetryTimeout:      cfg.DialerRetryTimeout,
+		ReadTimeout:             cfg.ReadTimeout,
+		WriteTimeout:            cfg.WriteTimeout,
+		ContextTimeoutEnabled:   cfg.ContextTimeoutEnabled,
+		ReadBufferSize:          cfg.ReadBufferSize,
+		WriteBufferSize:         cfg.WriteBufferSize,
+		PipelineReadBufferSize:  cfg.PipelineReadBufferSize,
+		PipelineWriteBufferSize: cfg.PipelineWriteBufferSize,
+		PipelinePoolSize:        cfg.PipelinePoolSize,
+		PoolFIFO:                cfg.PoolFIFO,
+		PoolSize:                cfg.PoolSize,
+		PoolTimeout:             cfg.PoolTimeout,
+		MinIdleConns:            cfg.MinIdleConns,
+		MaxIdleConns:            cfg.MaxIdleConns,
+		MaxActiveConns:          cfg.MaxActiveConns,
+		ConnMaxIdleTime:         cfg.ConnMaxIdleTime,
+		ConnMaxLifetime:         cfg.ConnMaxLifetime,
+		ConnMaxLifetimeJitter:   cfg.ConnMaxLifetimeJitter,
+		DisableIdentity:         cfg.DisableIdentity,
+		IdentitySuffix:          cfg.IdentitySuffix,
 	}
 
 	return redisOpts, nil
@@ -646,10 +703,6 @@ func applyClientOptions(redisOpts *rdb.Options, opts *options) {
 	if opts.pushNotificationProcessor != nil {
 		redisOpts.PushNotificationProcessor = opts.pushNotificationProcessor
 	}
-
-	if opts.maintNotificationsConfig != nil {
-		redisOpts.MaintNotificationsConfig = opts.maintNotificationsConfig
-	}
 }
 
 func applyClusterOptions(redisOpts *rdb.ClusterOptions, opts *options) {
@@ -684,10 +737,6 @@ func applyClusterOptions(redisOpts *rdb.ClusterOptions, opts *options) {
 
 	if opts.pushNotificationProcessor != nil {
 		redisOpts.PushNotificationProcessor = opts.pushNotificationProcessor
-	}
-
-	if opts.maintNotificationsConfig != nil {
-		redisOpts.MaintNotificationsConfig = opts.maintNotificationsConfig
 	}
 }
 
@@ -765,7 +814,7 @@ func applyCommonOptions(
 	tlsConfigField **tls.Config,
 	opts *options,
 ) {
-	*clientName = opts.clientID
+	*clientName = opts.clientName
 
 	if opts.identitySuffix != "" {
 		*identitySuffix = opts.identitySuffix

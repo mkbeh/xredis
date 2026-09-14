@@ -2,7 +2,6 @@ package xredis
 
 import (
 	"context"
-	"maps"
 
 	rdb "github.com/redis/go-redis/v9"
 )
@@ -11,7 +10,6 @@ import (
 type Client struct {
 	conn    rdb.UniversalClient
 	codec   Codec
-	labels  map[string]string
 	metrics clientMetrics
 }
 
@@ -80,15 +78,6 @@ func (c *Client) Raw() rdb.UniversalClient {
 	return c.conn
 }
 
-// Labels returns a copy of the labels configured for wrapper-level metrics.
-func (c *Client) Labels() map[string]string {
-	if c == nil {
-		return nil
-	}
-
-	return maps.Clone(c.labels)
-}
-
 // Ping checks Redis availability.
 func (c *Client) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx).Err()
@@ -101,9 +90,8 @@ func (c *Client) Close() error {
 
 func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
 	client := &Client{
-		conn:   conn,
-		codec:  opts.codec,
-		labels: maps.Clone(opts.metricLabels),
+		conn:  conn,
+		codec: opts.codec,
 	}
 
 	if opts.tracing != nil {
@@ -114,7 +102,7 @@ func newClient(conn rdb.UniversalClient, opts *options) (*Client, error) {
 	}
 
 	if opts.metrics != nil {
-		client.metrics = newClientMetrics(opts.metrics.Register(client))
+		client.metrics = newClientMetrics(opts.metrics.Register())
 	}
 
 	return client, nil

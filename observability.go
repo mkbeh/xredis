@@ -5,16 +5,24 @@ import (
 	"time"
 )
 
-// Metrics provides wrapper-level metrics instrumentation for a Client.
+// Metrics provides wrapper-level metrics instrumentation.
 //
 // Implementations must be safe to reuse across multiple clients. Register may
-// be called concurrently. Metrics returned for a client must be safe for
+// be called concurrently. ClientMetrics returned by Register must be safe for
 // concurrent use.
 type Metrics interface {
-	Register(client *Client) ClientMetrics
+	Register() ClientMetrics
 }
 
-// ClientMetrics contains domain-specific metrics bound to a Client.
+// Tracing instruments a Client with distributed tracing.
+//
+// Implementations must be safe to reuse across multiple clients. Instrument may
+// be called concurrently.
+type Tracing interface {
+	Instrument(client *Client) error
+}
+
+// ClientMetrics contains domain-specific wrapper metrics.
 type ClientMetrics struct {
 	Cache       CacheMetrics
 	Lock        LockMetrics
@@ -39,9 +47,9 @@ type RateLimiterMetrics interface {
 }
 
 type clientMetrics struct {
-	cache   cacheMetrics
-	lock    lockMetrics
-	limiter rateLimiterMetrics
+	cache       cacheMetrics
+	lock        lockMetrics
+	rateLimiter rateLimiterMetrics
 }
 
 func newClientMetrics(metrics ClientMetrics) clientMetrics {
@@ -52,11 +60,25 @@ func newClientMetrics(metrics ClientMetrics) clientMetrics {
 		lock: lockMetrics{
 			metrics: metrics.Lock,
 		},
-		limiter: rateLimiterMetrics{
+		rateLimiter: rateLimiterMetrics{
 			metrics: metrics.RateLimiter,
 		},
 	}
 }
+
+const (
+	cacheOperationGet       = "get"
+	cacheOperationGetOrLoad = "get_or_load"
+
+	cacheResultHit         = "hit"
+	cacheResultMiss        = "miss"
+	cacheResultNegativeHit = "negative_hit"
+	cacheResultError       = "error"
+
+	cacheLoaderOutcomeSuccess  = "success"
+	cacheLoaderOutcomeNotFound = "not_found"
+	cacheLoaderOutcomeError    = "error"
+)
 
 type cacheMetrics struct {
 	metrics CacheMetrics
@@ -86,6 +108,20 @@ func (m cacheMetrics) recordSingleflightShared(ctx context.Context) {
 	m.metrics.RecordSingleflightShared(ctx)
 }
 
+const (
+	lockTypeLease  = "lease"
+	lockTypeFenced = "fenced"
+
+	lockOperationAcquire = "acquire"
+	lockOperationExtend  = "extend"
+	lockOperationUnlock  = "unlock"
+
+	lockOutcomeSuccess   = "success"
+	lockOutcomeContended = "contended"
+	lockOutcomeNotOwned  = "not_owned"
+	lockOutcomeError     = "error"
+)
+
 type lockMetrics struct {
 	metrics LockMetrics
 }
@@ -98,6 +134,16 @@ func (m lockMetrics) recordOperation(ctx context.Context, lockType, operation, o
 	m.metrics.RecordOperation(ctx, lockType, operation, outcome)
 }
 
+const (
+	rateLimiterAlgorithmFixedWindow   = "fixed_window"
+	rateLimiterAlgorithmSlidingWindow = "sliding_window"
+	rateLimiterAlgorithmTokenBucket   = "token_bucket"
+
+	rateLimiterOutcomeAllowed  = "allowed"
+	rateLimiterOutcomeRejected = "rejected"
+	rateLimiterOutcomeError    = "error"
+)
+
 type rateLimiterMetrics struct {
 	metrics RateLimiterMetrics
 }
@@ -109,51 +155,3 @@ func (m rateLimiterMetrics) recordDecision(ctx context.Context, algorithm, outco
 
 	m.metrics.RecordDecision(ctx, algorithm, outcome, duration)
 }
-
-const (
-	cacheOperationGet       = "get"
-	cacheOperationGetOrLoad = "get_or_load"
-)
-
-const (
-	cacheResultHit         = "hit"
-	cacheResultMiss        = "miss"
-	cacheResultNegativeHit = "negative_hit"
-	cacheResultError       = "error"
-)
-
-const (
-	loaderOutcomeSuccess  = "success"
-	loaderOutcomeNotFound = "not_found"
-	loaderOutcomeError    = "error"
-)
-
-const (
-	lockTypeLease  = "lease"
-	lockTypeFenced = "fenced"
-)
-
-const (
-	lockOperationAcquire = "acquire"
-	lockOperationExtend  = "extend"
-	lockOperationUnlock  = "unlock"
-)
-
-const (
-	lockOutcomeSuccess   = "success"
-	lockOutcomeContended = "contended"
-	lockOutcomeNotOwned  = "not_owned"
-	lockOutcomeError     = "error"
-)
-
-const (
-	rateLimitAlgorithmFixedWindow   = "fixed_window"
-	rateLimitAlgorithmSlidingWindow = "sliding_window"
-	rateLimitAlgorithmTokenBucket   = "token_bucket"
-)
-
-const (
-	rateLimitOutcomeAllowed  = "allowed"
-	rateLimitOutcomeRejected = "rejected"
-	rateLimitOutcomeError    = "error"
-)

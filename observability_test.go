@@ -7,62 +7,62 @@ import (
 )
 
 type testMetrics struct {
-	client  *Client
 	metrics ClientMetrics
+	calls   int
 }
 
-func (m *testMetrics) Register(client *Client) ClientMetrics {
-	m.client = client
+func (m *testMetrics) Register() ClientMetrics {
+	m.calls++
 
 	return m.metrics
 }
 
-type testClientMetrics struct{}
+type testCacheMetrics struct{}
 
-func (*testClientMetrics) RecordRequest(context.Context, string, string) {}
+func (*testCacheMetrics) RecordRequest(context.Context, string, string) {}
 
-func (*testClientMetrics) RecordLoaderDuration(
-	context.Context,
-	string,
-	time.Duration,
-) {
-}
+func (*testCacheMetrics) RecordLoaderDuration(context.Context, string, time.Duration) {}
 
-func (*testClientMetrics) RecordSingleflightShared(context.Context) {}
+func (*testCacheMetrics) RecordSingleflightShared(context.Context) {}
 
-func (*testClientMetrics) RecordOperation(
-	context.Context,
-	string,
-	string,
-	string,
-) {
-}
+type testLockMetrics struct{}
 
-func (*testClientMetrics) RecordDecision(
-	context.Context,
-	string,
-	string,
-	time.Duration,
-) {
-}
+func (*testLockMetrics) RecordOperation(context.Context, string, string, string) {}
+
+type testRateLimiterMetrics struct{}
+
+func (*testRateLimiterMetrics) RecordDecision(context.Context, string, string, time.Duration) {}
 
 type testTracing struct {
 	client *Client
+	calls  int
 }
 
 func (t *testTracing) Instrument(client *Client) error {
 	t.client = client
+	t.calls++
 
 	return nil
 }
 
+var (
+	_ Metrics            = (*testMetrics)(nil)
+	_ CacheMetrics       = (*testCacheMetrics)(nil)
+	_ LockMetrics        = (*testLockMetrics)(nil)
+	_ RateLimiterMetrics = (*testRateLimiterMetrics)(nil)
+	_ Tracing            = (*testTracing)(nil)
+)
+
 func TestClientObservability(t *testing.T) {
-	clientMetrics := &testClientMetrics{}
+	cacheMetrics := &testCacheMetrics{}
+	lockMetrics := &testLockMetrics{}
+	rateLimiterMetrics := &testRateLimiterMetrics{}
+
 	metrics := &testMetrics{
 		metrics: ClientMetrics{
-			Cache:       clientMetrics,
-			Lock:        clientMetrics,
-			RateLimiter: clientMetrics,
+			Cache:       cacheMetrics,
+			Lock:        lockMetrics,
+			RateLimiter: rateLimiterMetrics,
 		},
 	}
 	tracing := &testTracing{}
@@ -70,44 +70,60 @@ func TestClientObservability(t *testing.T) {
 	client, err := NewClient(
 		WithMetrics(metrics),
 		WithTracing(tracing),
-		WithMetricLabel("service", "orders"),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if closeErr := client.Close(); closeErr != nil {
 			t.Fatal(closeErr)
 		}
-	}()
+	})
 
-	if metrics.client != client {
-		t.Fatal("metrics registered with unexpected client")
+	if metrics.calls != 1 {
+		t.Fatalf("unexpected metrics register calls: %d", metrics.calls)
+	}
+
+	if tracing.calls != 1 {
+		t.Fatalf("unexpected tracing instrument calls: %d", tracing.calls)
 	}
 
 	if tracing.client != client {
 		t.Fatal("tracing instrumented unexpected client")
 	}
 
-	if client.metrics.cache.metrics != clientMetrics {
+	if client.metrics.cache.metrics != cacheMetrics {
 		t.Fatal("cache metrics were not attached to client")
 	}
 
-	if client.metrics.lock.metrics != clientMetrics {
+	if client.metrics.lock.metrics != lockMetrics {
 		t.Fatal("lock metrics were not attached to client")
 	}
 
-	if client.metrics.limiter.metrics != clientMetrics {
+	if client.metrics.rateLimiter.metrics != rateLimiterMetrics {
 		t.Fatal("rate limiter metrics were not attached to client")
 	}
+}
 
-	labels := client.Labels()
-	if labels["service"] != "orders" {
-		t.Fatalf("unexpected service label: %q", labels["service"])
+func TestClientMetricsPartial(t *testing.T) {
+	cacheMetrics := &testCacheMetrics{}
+
+	metrics := newClientMetrics(ClientMetrics{
+		Cache: cacheMetrics,
+	})
+
+	if metrics.cache.metrics != cacheMetrics {
+		t.Fatal("cache metrics were not attached")
 	}
 
-	labels["service"] = "changed"
-	if client.Labels()["service"] != "orders" {
-		t.Fatal("client labels must be returned as a copy")
+	if metrics.lock.metrics != nil {
+		t.Fatal("lock metrics must be nil")
 	}
+
+	if metrics.rateLimiter.metrics != nil {
+		t.Fatal("rate limiter metrics must be nil")
+	}
+
+	metrics.lock.recordOperation(t.Context(), "", "", "")
+	metrics.rateLimiter.recordDecision(t.Context(), "", "", 0)
 }

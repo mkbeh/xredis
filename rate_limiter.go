@@ -296,7 +296,7 @@ func (l *RateLimiter) AllowFixedWindow(
 	key string,
 	limit RateLimit,
 ) (RateLimitDecision, error) {
-	return l.runDecision(ctx, rateLimitAlgorithmFixedWindow, func() (RateLimitDecision, error) {
+	return l.runDecision(ctx, rateLimiterAlgorithmFixedWindow, func() (RateLimitDecision, error) {
 		if err := l.validateKey(key); err != nil {
 			return RateLimitDecision{}, err
 		}
@@ -329,7 +329,7 @@ func (l *RateLimiter) AllowSlidingWindow(
 	key string,
 	limit RateLimit,
 ) (RateLimitDecision, error) {
-	return l.runDecision(ctx, rateLimitAlgorithmSlidingWindow, func() (RateLimitDecision, error) {
+	return l.runDecision(ctx, rateLimiterAlgorithmSlidingWindow, func() (RateLimitDecision, error) {
 		if err := l.validateKey(key); err != nil {
 			return RateLimitDecision{}, err
 		}
@@ -363,7 +363,7 @@ func (l *RateLimiter) AllowTokenBucket(
 	key string,
 	limit TokenBucketRateLimit,
 ) (RateLimitDecision, error) {
-	return l.runDecision(ctx, rateLimitAlgorithmTokenBucket, func() (RateLimitDecision, error) {
+	return l.runDecision(ctx, rateLimiterAlgorithmTokenBucket, func() (RateLimitDecision, error) {
 		if err := l.validateKey(key); err != nil {
 			return RateLimitDecision{}, err
 		}
@@ -395,10 +395,10 @@ func (l *RateLimiter) runDecision(
 	fn func() (RateLimitDecision, error),
 ) (RateLimitDecision, error) {
 	start := time.Now()
-	outcome := rateLimitOutcomeError
+	outcome := rateLimiterOutcomeError
 
 	defer func() {
-		l.client.metrics.limiter.recordDecision(
+		l.client.metrics.rateLimiter.recordDecision(
 			ctx,
 			algorithm,
 			outcome,
@@ -411,9 +411,9 @@ func (l *RateLimiter) runDecision(
 		return decision, err
 	}
 
-	outcome = rateLimitOutcomeRejected
+	outcome = rateLimiterOutcomeRejected
 	if decision.Allowed {
-		outcome = rateLimitOutcomeAllowed
+		outcome = rateLimiterOutcomeAllowed
 	}
 
 	return decision, nil

@@ -221,7 +221,7 @@ var _ = Describe("Pipeline", func() {
 					Addr: redisAddr,
 					DB:   testDB,
 				}),
-				xredis.WithClientID("xredis-pipeline-codec-test"),
+				xredis.WithClientName("xredis-pipeline-codec-test"),
 				xredis.WithCodec(failingPipelineCodec{}),
 			)
 			Expect(err).NotTo(HaveOccurred())
