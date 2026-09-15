@@ -332,6 +332,14 @@ var _ = Describe("Commands", func() {
 			Expect(value).To(Equal(int64(5)))
 		})
 
+		It("returns command errors from a transactional hash write", func() {
+			Expect(client.Set(ctx, "user:42", "not-a-hash", 0)).To(Succeed())
+
+			err := client.HSet(ctx, "user:42", time.Minute, "name", "Ada")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("WRONGTYPE"))
+		})
+
 		It("leaves an existing hash expiration unchanged when ttl is zero", func() {
 			Expect(client.HSet(
 				ctx,

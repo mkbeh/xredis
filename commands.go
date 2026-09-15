@@ -56,16 +56,7 @@ func (c *Client) HGetAll(ctx context.Context, key string, dst any) (bool, error)
 //
 // It returns ok=false when the hash or field does not exist.
 func (c *Client) HGet(ctx context.Context, key, field string) (string, bool, error) {
-	value, err := c.conn.HGet(ctx, key, field).Result()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return "", false, nil
-		}
-
-		return "", false, err
-	}
-
-	return value, true, nil
+	return optionalResult(c.conn.HGet(ctx, key, field).Result())
 }
 
 // HSet sets hash fields and optionally applies TTL to the hash key.
@@ -97,22 +88,14 @@ func (c *Client) HSet(ctx context.Context, key string, ttl time.Duration, values
 		return c.conn.HSet(ctx, key, values...).Err()
 	}
 
-	pipe := c.conn.TxPipeline()
-	pipe.HSet(ctx, key, values...)
-	pipe.Expire(ctx, key, ttl)
+	_, err := c.conn.TxPipelined(ctx, func(pipe rdb.Pipeliner) error {
+		pipe.HSet(ctx, key, values...)
+		pipe.Expire(ctx, key, ttl)
 
-	cmders, err := pipe.Exec(ctx)
-	if err != nil {
-		return err
-	}
+		return nil
+	})
 
-	for _, cmd := range cmders {
-		if err = cmd.Err(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 // HDel deletes fields from the hash stored at key.
@@ -141,16 +124,7 @@ func (c *Client) Get(ctx context.Context, key string, dst any) (bool, error) {
 //
 // It returns ok=false when the key does not exist.
 func (c *Client) GetDel(ctx context.Context, key string) (string, bool, error) {
-	value, err := c.conn.GetDel(ctx, key).Result()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return "", false, nil
-		}
-
-		return "", false, err
-	}
-
-	return value, true, nil
+	return optionalResult(c.conn.GetDel(ctx, key).Result())
 }
 
 // GetEx reads the value stored at key and atomically updates its expiration.
@@ -160,25 +134,12 @@ func (c *Client) GetDel(ctx context.Context, key string) (string, bool, error) {
 // ttl > 0 applies the given expiration.
 //
 // It returns ok=false when the key does not exist.
-func (c *Client) GetEx(
-	ctx context.Context,
-	key string,
-	ttl time.Duration,
-) (string, bool, error) {
+func (c *Client) GetEx(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
 	if ttl < 0 {
 		return "", false, ErrInvalidTTL
 	}
 
-	value, err := c.conn.GetEx(ctx, key, ttl).Result()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return "", false, nil
-		}
-
-		return "", false, err
-	}
-
-	return value, true, nil
+	return optionalResult(c.conn.GetEx(ctx, key, ttl).Result())
 }
 
 // GetStruct reads an encoded Redis value and unmarshals it into dst.
@@ -230,12 +191,7 @@ func (c *Client) GetStructDel(ctx context.Context, key string, dst any) (bool, e
 // ttl > 0 applies the given expiration.
 //
 // It returns ok=false when the key does not exist.
-func (c *Client) GetStructEx(
-	ctx context.Context,
-	key string,
-	dst any,
-	ttl time.Duration,
-) (bool, error) {
+func (c *Client) GetStructEx(ctx context.Context, key string, dst any, ttl time.Duration) (bool, error) {
 	if ttl < 0 {
 		return false, ErrInvalidTTL
 	}
@@ -335,107 +291,37 @@ func (c *Client) SetStructXX(ctx context.Context, key string, value any, ttl tim
 
 // Bool reads a Redis string value as bool.
 func (c *Client) Bool(ctx context.Context, key string) (val, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Bool()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Bool())
 }
 
 // Bytes reads a Redis string value as bytes.
 func (c *Client) Bytes(ctx context.Context, key string) (val []byte, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Bytes()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Bytes())
 }
 
 // Float64 reads a Redis string value as float64.
 func (c *Client) Float64(ctx context.Context, key string) (val float64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Float64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Float64())
 }
 
 // Int reads a Redis string value as int.
 func (c *Client) Int(ctx context.Context, key string) (val int, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Int()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Int())
 }
 
 // Int64 reads a Redis string value as int64.
 func (c *Client) Int64(ctx context.Context, key string) (val int64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Int64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Int64())
 }
 
 // Uint64 reads a Redis string value as uint64.
 func (c *Client) Uint64(ctx context.Context, key string) (val uint64, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Uint64()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Uint64())
 }
 
 // String reads a Redis string value as string.
 func (c *Client) String(ctx context.Context, key string) (val string, ok bool, err error) {
-	res := c.conn.Get(ctx, key)
-	val, err = res.Result()
-	if err != nil {
-		if errors.Is(err, rdb.Nil) {
-			return val, false, nil
-		}
-
-		return val, false, err
-	}
-
-	return val, true, nil
+	return optionalResult(c.conn.Get(ctx, key).Result())
 }
 
 // Incr increments an integer value and returns the updated value.
@@ -451,4 +337,16 @@ func (c *Client) Decr(ctx context.Context, key string) (int64, error) {
 // Delete deletes key.
 func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.conn.Del(ctx, key).Err()
+}
+
+func optionalResult[T any](value T, err error) (T, bool, error) {
+	if err != nil {
+		if errors.Is(err, rdb.Nil) {
+			return value, false, nil
+		}
+
+		return value, false, err
+	}
+
+	return value, true, nil
 }
