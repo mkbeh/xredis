@@ -19,7 +19,7 @@ func NewClient(redisOpts *rdb.Options, opts ...Option) (*Client, error) {
 		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewClient(redisOpts), newOptions(opts...))
+	return newClient(rdb.NewClient(redisOpts), newOptions(opts...)), nil
 }
 
 // NewClusterClient creates a Redis Cluster client.
@@ -28,7 +28,7 @@ func NewClusterClient(redisOpts *rdb.ClusterOptions, opts ...Option) (*Client, e
 		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewClusterClient(redisOpts), newOptions(opts...))
+	return newClient(rdb.NewClusterClient(redisOpts), newOptions(opts...)), nil
 }
 
 // NewFailoverClient creates a Redis Sentinel / failover client.
@@ -37,7 +37,7 @@ func NewFailoverClient(redisOpts *rdb.FailoverOptions, opts ...Option) (*Client,
 		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewFailoverClient(redisOpts), newOptions(opts...))
+	return newClient(rdb.NewFailoverClient(redisOpts), newOptions(opts...)), nil
 }
 
 // NewFailoverClusterClient creates a Redis Sentinel / failover cluster client.
@@ -46,7 +46,7 @@ func NewFailoverClusterClient(redisOpts *rdb.FailoverOptions, opts ...Option) (*
 		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewFailoverClusterClient(redisOpts), newOptions(opts...))
+	return newClient(rdb.NewFailoverClusterClient(redisOpts), newOptions(opts...)), nil
 }
 
 // NewRing creates a Redis Ring client for client-side sharding.
@@ -55,7 +55,7 @@ func NewRing(redisOpts *rdb.RingOptions, opts ...Option) (*Client, error) {
 		return nil, ErrInvalidOptions
 	}
 
-	return newClient(rdb.NewRing(redisOpts), newOptions(opts...))
+	return newClient(rdb.NewRing(redisOpts), newOptions(opts...)), nil
 }
 
 // Raw returns the underlying go-redis client.
@@ -73,22 +73,15 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func newClient(conn rdb.UniversalClient, opts options) (*Client, error) {
+func newClient(conn rdb.UniversalClient, opts options) *Client {
 	client := &Client{
 		conn:  conn,
 		codec: opts.codec,
-	}
-
-	if opts.tracing != nil {
-		if err := opts.tracing.Instrument(client); err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
 	}
 
 	if opts.metrics != nil {
 		client.metrics = newClientMetrics(opts.metrics.Register())
 	}
 
-	return client, nil
+	return client
 }

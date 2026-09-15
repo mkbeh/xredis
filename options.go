@@ -6,7 +6,6 @@ type Option func(*options)
 type options struct {
 	codec   Codec
 	metrics Metrics
-	tracing Tracing
 }
 
 func newOptions(opts ...Option) options {
@@ -37,15 +36,6 @@ func WithMetrics(metrics Metrics) Option {
 	return func(opts *options) {
 		if metrics != nil {
 			opts.metrics = metrics
-		}
-	}
-}
-
-// WithTracing configures client tracing instrumentation.
-func WithTracing(tracing Tracing) Option {
-	return func(opts *options) {
-		if tracing != nil {
-			opts.tracing = tracing
 		}
 	}
 }

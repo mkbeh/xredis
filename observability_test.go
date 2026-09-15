@@ -49,28 +49,15 @@ func (m *testRateLimiterMetrics) RecordDecision(context.Context, string, string,
 	m.decisions++
 }
 
-type testTracing struct {
-	client *xredis.Client
-	calls  int
-}
-
-func (t *testTracing) Instrument(client *xredis.Client) error {
-	t.client = client
-	t.calls++
-
-	return nil
-}
-
 var (
 	_ xredis.Metrics            = (*testMetrics)(nil)
 	_ xredis.CacheMetrics       = (*testCacheMetrics)(nil)
 	_ xredis.LockMetrics        = (*testLockMetrics)(nil)
 	_ xredis.RateLimiterMetrics = (*testRateLimiterMetrics)(nil)
-	_ xredis.Tracing            = (*testTracing)(nil)
 )
 
 var _ = Describe("Client observability", func() {
-	It("registers metrics and tracing once", func() {
+	It("registers metrics once", func() {
 		cacheMetrics := &testCacheMetrics{}
 		lockMetrics := &testLockMetrics{}
 		rateLimiterMetrics := &testRateLimiterMetrics{}
@@ -82,7 +69,6 @@ var _ = Describe("Client observability", func() {
 				RateLimiter: rateLimiterMetrics,
 			},
 		}
-		tracing := &testTracing{}
 
 		client, err := xredis.NewClient(
 			&rdb.Options{
@@ -90,7 +76,6 @@ var _ = Describe("Client observability", func() {
 				DB:   testDB,
 			},
 			xredis.WithMetrics(metrics),
-			xredis.WithTracing(tracing),
 		)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() {
@@ -98,8 +83,6 @@ var _ = Describe("Client observability", func() {
 		})
 
 		Expect(metrics.calls).To(Equal(1))
-		Expect(tracing.calls).To(Equal(1))
-		Expect(tracing.client).To(BeIdenticalTo(client))
 	})
 
 	It("routes wrapper metrics to their domains", func() {
