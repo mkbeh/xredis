@@ -1,15 +1,14 @@
-# Redis Commands REST API
+## Example: Redis Commands REST API
 
-This example shows the main Redis command helpers provided by `xredis`.
+This example demonstrates how to use the primary Redis command helpers provided by `xredis` in a REST API.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Redis health checks with `Ping`
-* Raw string values with `Set` and `String`
-* Codec-based values with `SetStruct` and `GetStruct`
-* Redis hashes with `HSet` and `HGetAll`
-* Counters with `Incr` and `Int64`
-* Key cleanup with `Delete`
+* **Raw Values** — Store and read Redis strings with `Set` and `String`.
+* **Structured Values** — Encode and decode Go values with `SetStruct` and `GetStruct`.
+* **Redis Hashes** — Store and read structured hash values with `HSet` and `HGetAll`.
+* **Counters** — Increment numeric values atomically with `Incr`.
+* **Key Management** — Remove sample data with `Delete`.
 
 ## Configuration
 
@@ -76,46 +75,6 @@ The HTTP server starts on:
 ```text
 localhost:8080
 ```
-
-## Metrics
-
-Prometheus metrics are available at:
-
-```shell
-curl 'http://localhost:8080/metrics'
-```
-
-Useful Redis client metrics for this example include:
-
-```text
-db_client_operation_duration_seconds
-db_client_connection_count
-db_client_connection_create_time_seconds
-db_client_connection_wait_time_seconds
-db_client_connection_use_time_seconds
-db_client_connection_pending_requests
-redis_client_errors_total
-```
-
-Check Redis command duration metrics:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'db_client_operation_duration_seconds'
-```
-
-Check connection pool metrics:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep -E 'db_client_connection_(count|create_time|wait_time|use_time|pending_requests)'
-```
-
-Check Redis client errors:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_errors_total'
-```
-
-All examples below use the sample ID `42`.
 
 ## Health check
 
@@ -186,7 +145,7 @@ curl 'localhost:8080/users/42'
 
 ## Counter
 
-Increment a counter with `Incr` and read it with `Int64`:
+Increment a counter with `Incr`:
 
 ```shell
 curl -X POST 'localhost:8080/counters/42/increment'
