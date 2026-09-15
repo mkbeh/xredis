@@ -1,15 +1,14 @@
-# Redis Locks REST API
+## Example: Redis Locks REST API
 
-This example shows how to use Redis lease locks and fenced locks with `xredis`.
+This example demonstrates how to protect application workflows with Redis lease locks and fenced locks using `xredis`.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Redis lease lock with `TryLock`
-* Safe `Unlock` with owner token check
-* Lock TTL extension with `Extend`
-* Fenced lock with a fencing token
-* Fencing counter retention with `WithFencingCounterTTL`
-* Resource-side stale fencing token rejection
+* **Lease Locking** — Acquire and safely release locks with owner-token validation.
+* **Lock Extension** — Extend an acquired lock before continuing protected work.
+* **Fenced Locking** — Generate monotonically increasing fencing tokens for protected resources.
+* **Stale Writer Protection** — Reject operations that use an older fencing token.
+* **Redis Cluster Safety** — Keep lock and fencing-counter keys in the same hash slot with Redis hash tags.
 
 ## Configuration
 
@@ -77,61 +76,13 @@ The HTTP server starts on:
 localhost:8080
 ```
 
-## Metrics
-
-Prometheus metrics are available at:
-
-```shell
-curl 'http://localhost:8080/metrics'
-```
-
-Useful lock metrics for this example include:
-
-```text
-redis_client_lock_operations_total
-```
-
-Lease lock operations:
-
-```text
-redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="acquire",redis_client_lock_outcome="success"}
-redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="acquire",redis_client_lock_outcome="contended"}
-redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="extend",redis_client_lock_outcome="success"}
-redis_client_lock_operations_total{redis_client_lock_type="lease",redis_client_lock_operation="unlock",redis_client_lock_outcome="success"}
-```
-
-Fenced lock operations:
-
-```text
-redis_client_lock_operations_total{redis_client_lock_type="fenced",redis_client_lock_operation="acquire",redis_client_lock_outcome="success"}
-redis_client_lock_operations_total{redis_client_lock_type="fenced",redis_client_lock_operation="unlock",redis_client_lock_outcome="success"}
-```
-
-Check all lock metrics:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_operations_total'
-```
-
-Check contended acquisitions:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_operation="acquire"'   | grep 'redis_client_lock_outcome="contended"'
-```
-
-Check fenced lock operations:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_lock_type="fenced"'
-```
-
 ## Health check
 
 ```shell
 curl 'localhost:8080/healthz'
 ```
 
-## Simple lock flow
+## Lease lock flow
 
 This endpoint acquires a Redis lease lock, processes an order, and unlocks it.
 
@@ -214,7 +165,7 @@ HTTP 200
 
 ## Cleanup
 
-Deletes known sample lock and fencing keys with `DeleteMany` and resets the in-memory repository.
+Deletes known sample lock and fencing keys with `DeleteKeys` and resets the in-memory repository.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'

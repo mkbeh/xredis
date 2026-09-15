@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -17,23 +18,17 @@ const (
 	defaultHTTP  = "localhost:8080"
 	defaultRedis = "localhost:6379"
 
-	simpleLockTTL     = 5 * time.Second
+	leaseLockTTL      = 5 * time.Second
 	shortLockTTL      = 1 * time.Second
 	extendedLockTTL   = 5 * time.Second
 	fencedLockTTL     = 5 * time.Second
 	fencingCounterTTL = 7 * 24 * time.Hour
 	unlockTimeout     = time.Second
-	sampleClient      = "locks-example-client"
-	contentTypeKey    = "Content-Type"
-	contentTypeJSON   = "application/json"
 )
 
 var (
 	client *xredis.Client
 	repo   *orderRepository
-
-	redisAddr string
-	httpAddr  string
 
 	sampleOrderIDs = []string{"42", "7", "100"}
 )
@@ -44,9 +39,62 @@ type unlocker interface {
 	Unlock(ctx context.Context) error
 }
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	var err error
+
+	// Create a Redis client.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create the protected order repository.
+	repo = newOrderRepository()
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /orders/{id}", getOrderHandler)
+
+	mux.HandleFunc("POST /locks/{id}/work", leaseLockWorkHandler)
+	mux.HandleFunc("POST /locks/{id}/extend", extendLockHandler)
+
+	mux.HandleFunc("POST /orders/{id}/process", fencedLockWorkHandler)
+	mux.HandleFunc("POST /orders/{id}/stale", staleFencingTokenHandler)
+
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("locks example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	// Start the HTTP server.
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -74,11 +122,11 @@ func getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func simpleLockWorkHandler(w http.ResponseWriter, r *http.Request) {
+func leaseLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	key := simpleLockKey(id)
+	key := leaseLockKey(id)
 
-	lock, acquired, err := client.TryLock(r.Context(), key, simpleLockTTL)
+	lock, acquired, err := client.TryLock(r.Context(), key, leaseLockTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -105,7 +153,7 @@ func simpleLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 
 func extendLockHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	key := simpleLockKey(id)
+	key := leaseLockKey(id)
 
 	lock, acquired, err := client.TryLock(r.Context(), key, shortLockTTL)
 	if err != nil {
@@ -179,7 +227,7 @@ func fencedLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 		"processed_with_fencing",
 	)
 	if err != nil {
-		if errors.Is(err, ErrStaleFencingToken) {
+		if errors.Is(err, errStaleFencingToken) {
 			writeError(w, http.StatusConflict, err)
 			return
 		}
@@ -261,7 +309,7 @@ func staleFencingTokenHandler(w http.ResponseWriter, r *http.Request) {
 		staleToken,
 		"processed_with_stale_fencing_token",
 	)
-	if !errors.Is(err, ErrStaleFencingToken) {
+	if !errors.Is(err, errStaleFencingToken) {
 		writeError(w, http.StatusInternalServerError, errors.New("expected stale fencing token rejection"))
 		return
 	}
@@ -281,13 +329,13 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range sampleOrderIDs {
 		keys = append(keys,
-			simpleLockKey(id),
+			leaseLockKey(id),
 			fencedLockKey(id),
 			fencingKey(id),
 		)
 	}
 
-	if err := client.DeleteMany(r.Context(), keys); err != nil {
+	if err := client.DeleteKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -299,72 +347,6 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func main() {
-	var err error
-
-	metrics, err := newMetricsRuntime()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	defer func() {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
-			5*time.Second,
-		)
-		defer cancel()
-
-		if shutdownErr := metrics.Shutdown(ctx); shutdownErr != nil {
-			log.Println("unable to shut down metrics:", shutdownErr)
-		}
-	}()
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	repo = newOrderRepository()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("GET /orders/{id}", getOrderHandler)
-	mux.HandleFunc("POST /locks/{id}/work", simpleLockWorkHandler)
-	mux.HandleFunc("POST /locks/{id}/extend", extendLockHandler)
-	mux.HandleFunc("POST /orders/{id}/process", fencedLockWorkHandler)
-	mux.HandleFunc("POST /orders/{id}/stale", staleFencingTokenHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-	mux.Handle("GET /metrics", metrics.Handler())
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("locks example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func unlockSafely(lock unlocker) {
 	ctx, cancel := context.WithTimeout(context.Background(), unlockTimeout)
 	defer cancel()
@@ -374,7 +356,7 @@ func unlockSafely(lock unlocker) {
 	}
 }
 
-func simpleLockKey(id string) string {
+func leaseLockKey(id string) string {
 	return "xredis:locks:simple:" + id
 }
 
@@ -387,7 +369,7 @@ func fencingKey(id string) string {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

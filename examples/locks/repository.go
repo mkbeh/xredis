@@ -9,7 +9,7 @@ import (
 
 const repositoryDelay = 300 * time.Millisecond
 
-var ErrStaleFencingToken = errors.New("stale fencing token")
+var errStaleFencingToken = errors.New("stale fencing token")
 
 type Order struct {
 	ID               string `json:"id"`
@@ -65,7 +65,7 @@ func (r *orderRepository) ProcessWithFence(ctx context.Context, id string, fenci
 
 	order := r.order(id)
 	if fencingToken <= order.LastFencingToken {
-		return Order{}, ErrStaleFencingToken
+		return Order{}, errStaleFencingToken
 	}
 
 	order.Status = status
