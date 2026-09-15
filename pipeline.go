@@ -22,7 +22,7 @@ type SetItem struct {
 	Expiration time.Duration
 }
 
-// SetMany stores multiple raw Redis values using SET commands in one pipeline.
+// SetItems stores multiple raw Redis values using SET commands in one pipeline.
 //
 // Values are passed directly to Redis without Codec encoding.
 //
@@ -30,7 +30,7 @@ type SetItem struct {
 // with standalone Redis, Redis Cluster, and Ring clients.
 //
 // For very large input, split items into batches at the call site.
-func (c *Client) SetMany(ctx context.Context, items []SetItem) error {
+func (c *Client) SetItems(ctx context.Context, items []SetItem) error {
 	if err := validatePipelineClient(c); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (c *Client) SetMany(ctx context.Context, items []SetItem) error {
 	return err
 }
 
-// SetStructMany encodes and stores multiple values using SET commands in one pipeline.
+// SetStructItems encodes and stores multiple values using SET commands in one pipeline.
 //
 // Values are encoded with the client Codec before being stored.
 //
@@ -62,7 +62,7 @@ func (c *Client) SetMany(ctx context.Context, items []SetItem) error {
 // with standalone Redis, Redis Cluster, and Ring clients.
 //
 // For very large input, split items into batches at the call site.
-func (c *Client) SetStructMany(ctx context.Context, items []SetItem) error {
+func (c *Client) SetStructItems(ctx context.Context, items []SetItem) error {
 	if err := validatePipelineClient(c); err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ type HSetItem struct {
 	Expiration time.Duration
 }
 
-// HSetMany sets fields in multiple Redis hashes using one pipeline.
+// HSetItems sets fields in multiple Redis hashes using one pipeline.
 //
 // Each item is written as an independent HSET command.
 // If an item has a positive TTL, an EXPIRE command is added for that hash key.
@@ -117,7 +117,7 @@ type HSetItem struct {
 // and Ring clients because each command operates on one key.
 //
 // For very large input, split items into batches at the call site.
-func (c *Client) HSetMany(ctx context.Context, items []HSetItem) error {
+func (c *Client) HSetItems(ctx context.Context, items []HSetItem) error {
 	if err := validatePipelineClient(c); err != nil {
 		return err
 	}
@@ -149,14 +149,14 @@ func (c *Client) HSetMany(ctx context.Context, items []HSetItem) error {
 	return err
 }
 
-// DeleteMany deletes keys.
+// DeleteKeys deletes keys.
 //
 // For standalone Redis, keys are deleted using one multi-key DEL command.
 // For Redis Cluster and Ring clients, keys are deleted with single-key DEL
 // commands inside a pipeline to avoid multi-key hash-slot constraints.
 //
 // For very large input, split keys into batches at the call site.
-func (c *Client) DeleteMany(ctx context.Context, keys []string) error {
+func (c *Client) DeleteKeys(ctx context.Context, keys []string) error {
 	if err := validatePipelineClient(c); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (c *Client) DeleteMany(ctx context.Context, keys []string) error {
 	}
 }
 
-// UnlinkMany unlinks keys.
+// UnlinkKeys unlinks keys.
 //
 // UNLINK removes keys from the keyspace and reclaims memory asynchronously,
 // which is preferable for large values.
@@ -192,7 +192,7 @@ func (c *Client) DeleteMany(ctx context.Context, keys []string) error {
 // commands inside a pipeline to avoid multi-key hash-slot constraints.
 //
 // For very large input, split keys into batches at the call site.
-func (c *Client) UnlinkMany(ctx context.Context, keys []string) error {
+func (c *Client) UnlinkKeys(ctx context.Context, keys []string) error {
 	if err := validatePipelineClient(c); err != nil {
 		return err
 	}

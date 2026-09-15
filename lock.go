@@ -193,11 +193,7 @@ func (l *Lock) validate() error {
 		return ErrInvalidLock
 	}
 
-	return validateLock(
-		l.client,
-		l.key,
-		l.token,
-	)
+	return validateLock(l.client, l.key, l.token)
 }
 
 func validateLock(client *Client, key, token string) error {

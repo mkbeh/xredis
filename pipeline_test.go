@@ -47,7 +47,7 @@ var _ = Describe("Pipeline", func() {
 
 	Describe("SetMany", func() {
 		It("stores multiple raw Redis values", func() {
-			err := client.SetMany(ctx, []xredis.SetItem{
+			err := client.SetItems(ctx, []xredis.SetItem{
 				{
 					Key:        "raw:string",
 					Value:      "hello",
@@ -90,7 +90,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("stores values without expiration when ttl is zero", func() {
-			Expect(client.SetMany(ctx, []xredis.SetItem{
+			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{
 					Key:   "raw:persistent",
 					Value: "value",
@@ -103,7 +103,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("is compatible with raw compare operations", func() {
-			Expect(client.SetMany(ctx, []xredis.SetItem{
+			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{
 					Key:   "raw:status",
 					Value: "processing",
@@ -120,12 +120,12 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("does nothing for an empty item list", func() {
-			Expect(client.SetMany(ctx, nil)).To(Succeed())
-			Expect(client.SetMany(ctx, []xredis.SetItem{})).To(Succeed())
+			Expect(client.SetItems(ctx, nil)).To(Succeed())
+			Expect(client.SetItems(ctx, []xredis.SetItem{})).To(Succeed())
 		})
 
 		It("rejects a negative ttl without executing queued commands", func() {
-			err := client.SetMany(ctx, []xredis.SetItem{
+			err := client.SetItems(ctx, []xredis.SetItem{
 				{
 					Key:   "raw:valid",
 					Value: "value",
@@ -156,7 +156,7 @@ var _ = Describe("Pipeline", func() {
 				Active: true,
 			}
 
-			Expect(client.SetStructMany(ctx, []xredis.SetItem{
+			Expect(client.SetStructItems(ctx, []xredis.SetItem{
 				{
 					Key:        "encoded:profile",
 					Value:      profile,
@@ -190,7 +190,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("stores codec-backed values that do not match raw comparisons", func() {
-			Expect(client.SetStructMany(ctx, []xredis.SetItem{
+			Expect(client.SetStructItems(ctx, []xredis.SetItem{
 				{
 					Key:   "encoded:status",
 					Value: "processing",
@@ -230,7 +230,7 @@ var _ = Describe("Pipeline", func() {
 				Expect(codecClient.Close()).To(Succeed())
 			}()
 
-			err = codecClient.SetStructMany(ctx, []xredis.SetItem{
+			err = codecClient.SetStructItems(ctx, []xredis.SetItem{
 				{
 					Key:   "encoded:first",
 					Value: "first",
@@ -252,7 +252,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("rejects a negative ttl without writing values", func() {
-			err := client.SetStructMany(ctx, []xredis.SetItem{
+			err := client.SetStructItems(ctx, []xredis.SetItem{
 				{
 					Key:   "encoded:valid",
 					Value: pipelineProfile{ID: "42"},
@@ -275,14 +275,14 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("does nothing for an empty item list", func() {
-			Expect(client.SetStructMany(ctx, nil)).To(Succeed())
-			Expect(client.SetStructMany(ctx, []xredis.SetItem{})).To(Succeed())
+			Expect(client.SetStructItems(ctx, nil)).To(Succeed())
+			Expect(client.SetStructItems(ctx, []xredis.SetItem{})).To(Succeed())
 		})
 	})
 
 	Describe("HSetMany", func() {
 		It("sets fields in multiple hashes", func() {
-			Expect(client.HSetMany(ctx, []xredis.HSetItem{
+			Expect(client.HSetItems(ctx, []xredis.HSetItem{
 				{
 					Key:        "hash:user:42",
 					Values:     []any{"name", "Ada", "age", 36},
@@ -335,7 +335,7 @@ var _ = Describe("Pipeline", func() {
 				"name", "Ada",
 			)).To(Succeed())
 
-			Expect(client.HSetMany(ctx, []xredis.HSetItem{
+			Expect(client.HSetItems(ctx, []xredis.HSetItem{
 				{
 					Key:        "hash:user:42",
 					Values:     []any{"age", 36},
@@ -349,7 +349,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("rejects empty hash values without executing queued commands", func() {
-			err := client.HSetMany(ctx, []xredis.HSetItem{
+			err := client.HSetItems(ctx, []xredis.HSetItem{
 				{
 					Key:    "hash:valid",
 					Values: []any{"field", "value"},
@@ -371,7 +371,7 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("rejects a negative ttl without writing hashes", func() {
-			err := client.HSetMany(ctx, []xredis.HSetItem{
+			err := client.HSetItems(ctx, []xredis.HSetItem{
 				{
 					Key:    "hash:valid",
 					Values: []any{"field", "value"},
@@ -390,19 +390,19 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("does nothing for an empty item list", func() {
-			Expect(client.HSetMany(ctx, nil)).To(Succeed())
-			Expect(client.HSetMany(ctx, []xredis.HSetItem{})).To(Succeed())
+			Expect(client.HSetItems(ctx, nil)).To(Succeed())
+			Expect(client.HSetItems(ctx, []xredis.HSetItem{})).To(Succeed())
 		})
 	})
 
 	Describe("DeleteMany", func() {
 		It("deletes multiple existing keys and ignores missing keys", func() {
-			Expect(client.SetMany(ctx, []xredis.SetItem{
+			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{Key: "delete:1", Value: "one"},
 				{Key: "delete:2", Value: "two"},
 			})).To(Succeed())
 
-			Expect(client.DeleteMany(ctx, []string{
+			Expect(client.DeleteKeys(ctx, []string{
 				"delete:1",
 				"delete:2",
 				"delete:missing",
@@ -418,19 +418,19 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("does nothing for an empty key list", func() {
-			Expect(client.DeleteMany(ctx, nil)).To(Succeed())
-			Expect(client.DeleteMany(ctx, []string{})).To(Succeed())
+			Expect(client.DeleteKeys(ctx, nil)).To(Succeed())
+			Expect(client.DeleteKeys(ctx, []string{})).To(Succeed())
 		})
 	})
 
 	Describe("UnlinkMany", func() {
 		It("unlinks multiple existing keys and ignores missing keys", func() {
-			Expect(client.SetMany(ctx, []xredis.SetItem{
+			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{Key: "unlink:1", Value: "one"},
 				{Key: "unlink:2", Value: "two"},
 			})).To(Succeed())
 
-			Expect(client.UnlinkMany(ctx, []string{
+			Expect(client.UnlinkKeys(ctx, []string{
 				"unlink:1",
 				"unlink:2",
 				"unlink:missing",
@@ -446,23 +446,23 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("does nothing for an empty key list", func() {
-			Expect(client.UnlinkMany(ctx, nil)).To(Succeed())
-			Expect(client.UnlinkMany(ctx, []string{})).To(Succeed())
+			Expect(client.UnlinkKeys(ctx, nil)).To(Succeed())
+			Expect(client.UnlinkKeys(ctx, []string{})).To(Succeed())
 		})
 	})
 
 	It("rejects a nil client", func() {
 		var invalidClient *xredis.Client
 
-		Expect(invalidClient.SetMany(ctx, nil)).
+		Expect(invalidClient.SetItems(ctx, nil)).
 			To(MatchError(xredis.ErrInvalidPipeline))
-		Expect(invalidClient.SetStructMany(ctx, nil)).
+		Expect(invalidClient.SetStructItems(ctx, nil)).
 			To(MatchError(xredis.ErrInvalidPipeline))
-		Expect(invalidClient.HSetMany(ctx, nil)).
+		Expect(invalidClient.HSetItems(ctx, nil)).
 			To(MatchError(xredis.ErrInvalidPipeline))
-		Expect(invalidClient.DeleteMany(ctx, nil)).
+		Expect(invalidClient.DeleteKeys(ctx, nil)).
 			To(MatchError(xredis.ErrInvalidPipeline))
-		Expect(invalidClient.UnlinkMany(ctx, nil)).
+		Expect(invalidClient.UnlinkKeys(ctx, nil)).
 			To(MatchError(xredis.ErrInvalidPipeline))
 	})
 })
