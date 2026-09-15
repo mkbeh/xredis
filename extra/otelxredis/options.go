@@ -51,15 +51,7 @@ const (
 )
 
 // MetricsOption configures OpenTelemetry metrics instrumentation.
-type MetricsOption interface {
-	apply(cfg *metricsConfig)
-}
-
-type metricsOptionFunc func(cfg *metricsConfig)
-
-func (f metricsOptionFunc) apply(cfg *metricsConfig) {
-	f(cfg)
-}
+type MetricsOption func(*metricsConfig)
 
 type metricsConfig struct {
 	meterProvider metric.MeterProvider
@@ -88,31 +80,31 @@ func defaultMetricsConfig() metricsConfig {
 // WithMeterProvider configures the OpenTelemetry meter provider used by native
 // go-redis and xredis wrapper-level metrics.
 func WithMeterProvider(provider metric.MeterProvider) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		if provider != nil {
 			cfg.meterProvider = provider
 		}
-	})
+	}
 }
 
 // WithClientID configures the client identity attribute for wrapper-level metrics.
 func WithClientID(id string) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		if id != "" {
 			cfg.clientID = id
 		}
-	})
+	}
 }
 
 // WithLabel adds a string attribute to wrapper-level metrics.
 //
 // Prefer stable, low-cardinality values.
 func WithLabel(key, value string) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		if key != "" {
 			cfg.labels[key] = value
 		}
-	})
+	}
 }
 
 // WithLabels adds string attributes to wrapper-level metrics.
@@ -120,61 +112,61 @@ func WithLabel(key, value string) MetricsOption {
 // Labels are merged with previously configured labels. When the same key is
 // configured more than once, the last value wins.
 func WithLabels(labels map[string]string) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		for key, value := range labels {
 			if key != "" {
 				cfg.labels[key] = value
 			}
 		}
-	})
+	}
 }
 
 // WithRedisMetricGroups configures enabled native Redis client metric groups.
 func WithRedisMetricGroups(groups RedisMetricGroupFlags) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.metricGroups = groups
-	})
+	}
 }
 
 // WithRedisMetricIncludeCommands configures Redis command allow-list for native metrics.
 func WithRedisMetricIncludeCommands(commands ...string) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.includeCommands = slices.Clone(commands)
-	})
+	}
 }
 
 // WithRedisMetricExcludeCommands configures Redis command deny-list for native metrics.
 func WithRedisMetricExcludeCommands(commands ...string) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.excludeCommands = slices.Clone(commands)
-	})
+	}
 }
 
 // WithRedisMetricHidePubSubChannelNames controls Pub/Sub channel name attributes.
 func WithRedisMetricHidePubSubChannelNames(hide bool) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.hidePubSubChannelNames = hide
-	})
+	}
 }
 
 // WithRedisMetricHideStreamNames controls Stream name attributes.
 func WithRedisMetricHideStreamNames(hide bool) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.hideStreamNames = hide
-	})
+	}
 }
 
 // WithRedisMetricHistogramAggregation configures native Redis metric histogram aggregation.
 func WithRedisMetricHistogramAggregation(aggregation RedisHistogramAggregation) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.histogramAggregation = aggregation
 		cfg.histogramAggregationSet = true
-	})
+	}
 }
 
 // WithRedisMetricHistogramBuckets configures native Redis metric histogram bucket boundaries in seconds.
 func WithRedisMetricHistogramBuckets(buckets ...float64) MetricsOption {
-	return metricsOptionFunc(func(cfg *metricsConfig) {
+	return func(cfg *metricsConfig) {
 		cfg.histogramBuckets = slices.Clone(buckets)
-	})
+	}
 }

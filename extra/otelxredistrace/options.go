@@ -10,15 +10,7 @@ import (
 )
 
 // TracingOption configures OpenTelemetry tracing instrumentation.
-type TracingOption interface {
-	apply(cfg *tracingConfig)
-}
-
-type tracingOptionFunc func(cfg *tracingConfig)
-
-func (f tracingOptionFunc) apply(cfg *tracingConfig) {
-	f(cfg)
-}
+type TracingOption func(*tracingConfig)
 
 type tracingConfig struct {
 	clientID   string
@@ -39,29 +31,29 @@ func (c *tracingConfig) add(opt redisotel.TracingOption) {
 
 // WithTracerProvider configures the OpenTelemetry tracer provider.
 func WithTracerProvider(provider trace.TracerProvider) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if provider != nil {
 			cfg.add(redisotel.WithTracerProvider(provider))
 		}
-	})
+	}
 }
 
 // WithClientID configures the client identity attribute for Redis spans.
 func WithClientID(id string) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if id != "" {
 			cfg.clientID = id
 		}
-	})
+	}
 }
 
 // WithLabel adds a string attribute to Redis spans.
 func WithLabel(key, value string) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if key != "" {
 			cfg.labels[key] = value
 		}
-	})
+	}
 }
 
 // WithLabels adds string attributes to Redis spans.
@@ -69,66 +61,66 @@ func WithLabel(key, value string) TracingOption {
 // Labels are merged with previously configured labels. When the same key is
 // configured more than once, the last value wins.
 func WithLabels(labels map[string]string) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		for key, value := range labels {
 			if key != "" {
 				cfg.labels[key] = value
 			}
 		}
-	})
+	}
 }
 
 // WithDBStatement controls whether raw Redis commands are recorded in spans.
 func WithDBStatement(on bool) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		cfg.add(redisotel.WithDBStatement(on))
-	})
+	}
 }
 
 // WithDBSystem configures the db.system tracing attribute.
 func WithDBSystem(system string) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if system != "" {
 			cfg.add(redisotel.WithDBSystem(system))
 		}
-	})
+	}
 }
 
 // WithAttributes configures additional tracing attributes.
 func WithAttributes(attrs ...attribute.KeyValue) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		cfg.attributes = append(cfg.attributes, slices.Clone(attrs)...)
-	})
+	}
 }
 
 // WithCommandFilter configures command filtering for Redis tracing.
 func WithCommandFilter(filter func(cmd rdb.Cmder) bool) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if filter != nil {
 			cfg.add(redisotel.WithCommandFilter(filter))
 		}
-	})
+	}
 }
 
 // WithCommandsFilter configures pipeline command filtering for Redis tracing.
 func WithCommandsFilter(filter func(cmds []rdb.Cmder) bool) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		if filter != nil {
 			cfg.add(redisotel.WithCommandsFilter(filter))
 		}
-	})
+	}
 }
 
 // WithDialFilter enables or disables filtering of dial commands in tracing.
 func WithDialFilter(on bool) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		cfg.add(redisotel.WithDialFilter(on))
-	})
+	}
 }
 
 // WithCallerEnabled controls whether tracing records caller file and line.
 func WithCallerEnabled(on bool) TracingOption {
-	return tracingOptionFunc(func(cfg *tracingConfig) {
+	return func(cfg *tracingConfig) {
 		cfg.add(redisotel.WithCallerEnabled(on))
-	})
+	}
 }

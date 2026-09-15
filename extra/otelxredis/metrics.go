@@ -59,7 +59,7 @@ func InitMetrics(opts ...MetricsOption) (*Metrics, error) {
 	cfg := defaultMetricsConfig()
 	for _, opt := range opts {
 		if opt != nil {
-			opt.apply(&cfg)
+			opt(&cfg)
 		}
 	}
 

@@ -26,7 +26,7 @@ func New(opts ...TracingOption) *Tracing {
 
 	for _, opt := range opts {
 		if opt != nil {
-			opt.apply(&cfg)
+			opt(&cfg)
 		}
 	}
 
