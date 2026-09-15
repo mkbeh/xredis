@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -64,12 +65,7 @@ func (r *userRepository) Loads() map[string]int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	loads := make(map[string]int, len(r.loads))
-	for key, value := range r.loads {
-		loads[key] = value
-	}
-
-	return loads
+	return maps.Clone(r.loads)
 }
 
 func (r *userRepository) Reset() {

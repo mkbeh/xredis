@@ -10,35 +10,25 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
-	keyPrefix        = "xredis:cache:"
-	defaultDB        = 0
-	defaultHTTP      = "localhost:8080"
-	defaultRedis     = "localhost:6379"
+	userCachePrefix = "xredis:cache:user:"
+	defaultDB       = 0
+	defaultHTTP     = "localhost:8080"
+	defaultRedis    = "localhost:6379"
+
 	cacheTTL         = 60 * time.Second
 	cacheJitter      = 5 * time.Second
 	cacheNegativeTTL = 30 * time.Second
-	sampleClient     = "cache-example-client"
-	contentTypeKey   = "Content-Type"
-	contentTypeJSON  = "application/json"
 )
 
-var (
-	client    *xredis.Client
-	userCache *xredis.Cache[User]
-	repo      *userRepository
-
-	redisAddr string
-	httpAddr  string
-
-	sampleUserIDs = []string{"42", "7", "100", "404"}
-)
-
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+type User struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Age    int    `json:"age"`
+	Active bool   `json:"active"`
 }
 
 type UserRequest struct {
@@ -47,11 +37,78 @@ type UserRequest struct {
 	Active bool   `json:"active"`
 }
 
-type User struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Age    int    `json:"age"`
-	Active bool   `json:"active"`
+var (
+	client        *xredis.Client
+	userCache     *xredis.Cache[User]
+	repo          *userRepository
+	sampleUserIDs = []string{"42", "7", "100", "404"}
+)
+
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	var err error
+
+	// Create a Redis client.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create a typed user cache.
+	userCache, err = client.Cache[User](
+		xredis.WithCachePrefix(userCachePrefix),
+		xredis.WithCacheTTL(cacheTTL),
+		xredis.WithCacheJitter(cacheJitter),
+		xredis.WithCacheNegativeTTL(cacheNegativeTTL),
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	repo = newUserRepository()
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", healthHandler)
+
+	mux.HandleFunc("PUT /users/{id}", setUserHandler)
+	mux.HandleFunc("GET /users/{id}", getCachedUserHandler)
+	mux.HandleFunc("GET /users/{id}/load", getOrLoadUserHandler)
+	mux.HandleFunc("DELETE /users/{id}", deleteUserHandler)
+
+	mux.HandleFunc("GET /stats", statsHandler)
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("cache example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	// Start the HTTP server.
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +212,7 @@ func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func statsHandler(w http.ResponseWriter, r *http.Request) {
+func statsHandler(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repository_loads": repo.Loads(),
 	})
@@ -174,87 +231,6 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func main() {
-	var err error
-
-	metrics, err := newMetricsRuntime()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	defer func() {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
-			5*time.Second,
-		)
-		defer cancel()
-
-		if shutdownErr := metrics.Shutdown(ctx); shutdownErr != nil {
-			log.Println("unable to shut down metrics:", shutdownErr)
-		}
-	}()
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	userCache, err = xredis.NewCache[User](
-		client,
-		xredis.WithCachePrefix(keyPrefix+"user:"),
-		xredis.WithCacheTTL(cacheTTL),
-		xredis.WithCacheJitter(cacheJitter),
-		xredis.WithCacheNegativeTTL(cacheNegativeTTL),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	repo = newUserRepository()
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /healthz", healthHandler)
-
-	mux.HandleFunc("PUT /users/{id}", setUserHandler)
-	mux.HandleFunc("GET /users/{id}", getCachedUserHandler)
-	mux.HandleFunc("GET /users/{id}/load", getOrLoadUserHandler)
-	mux.HandleFunc("DELETE /users/{id}", deleteUserHandler)
-
-	mux.HandleFunc("GET /stats", statsHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-
-	mux.Handle("GET /metrics", metrics.Handler())
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("commands example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func deleteSampleUsers(ctx context.Context) error {
 	for _, id := range sampleUserIDs {
 		if err := userCache.Delete(ctx, id); err != nil {
@@ -266,11 +242,11 @@ func deleteSampleUsers(ctx context.Context) error {
 }
 
 func userKey(id string) string {
-	return keyPrefix + "user:" + id
+	return userCachePrefix + id
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

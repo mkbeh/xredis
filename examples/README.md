@@ -11,7 +11,6 @@ This directory contains runnable examples demonstrating the main features and us
 | [`rate_limiter`](rate_limiter) | Distributed rate limiting with fixed window, sliding window, and token bucket algorithms                |
 | [`pipeline`](pipeline)         | Batched writes, hash updates, delete, and unlink helpers                                                |
 | [`scan`](scan)                 | Cursor scans, topology-wide iteration, key-type filters, delete, and unlink operations                  |
-| [`env`](env)                   | Loading client configuration from environment variables                                                 |
 | [`otel`](otel)                 | Exporting OpenTelemetry traces through OTLP to Jaeger                                                   |
 
 ## Running the examples
