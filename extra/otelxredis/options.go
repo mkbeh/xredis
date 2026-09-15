@@ -1,84 +1,31 @@
 package otelxredis
 
 import (
-	"slices"
+	"maps"
 
-	redisotelnative "github.com/redis/go-redis/extra/redisotel-native/v9"
 	"go.opentelemetry.io/otel/metric"
 )
 
-// RedisMetricGroupFlags defines redisotel-native metric groups.
-type RedisMetricGroupFlags = redisotelnative.MetricGroupFlags
-
-// RedisHistogramAggregation defines histogram aggregation mode for redisotel-native metrics.
-type RedisHistogramAggregation = redisotelnative.HistogramAggregation
-
-const (
-	// RedisMetricGroupCommand enables Redis command metrics.
-	RedisMetricGroupCommand = redisotelnative.MetricGroupFlagCommand
-
-	// RedisMetricGroupConnectionBasic enables basic connection metrics.
-	RedisMetricGroupConnectionBasic = redisotelnative.MetricGroupFlagConnectionBasic
-
-	// RedisMetricGroupResiliency enables Redis resiliency metrics.
-	RedisMetricGroupResiliency = redisotelnative.MetricGroupFlagResiliency
-
-	// RedisMetricGroupConnectionAdvanced enables advanced connection metrics.
-	RedisMetricGroupConnectionAdvanced = redisotelnative.MetricGroupFlagConnectionAdvanced
-
-	// RedisMetricGroupPubSub enables Redis Pub/Sub metrics.
-	RedisMetricGroupPubSub = redisotelnative.MetricGroupFlagPubSub
-
-	// RedisMetricGroupStream enables Redis Stream metrics.
-	RedisMetricGroupStream = redisotelnative.MetricGroupFlagStream
-
-	// RedisMetricGroupDefault enables production-safe default Redis client metrics.
-	RedisMetricGroupDefault = RedisMetricGroupCommand |
-		RedisMetricGroupConnectionBasic |
-		RedisMetricGroupResiliency |
-		RedisMetricGroupConnectionAdvanced
-
-	// RedisMetricGroupAll enables all Redis client metric groups.
-	RedisMetricGroupAll = redisotelnative.MetricGroupAll
-)
-
-const (
-	// RedisHistogramAggregationExplicitBucket uses explicit bucket histograms.
-	RedisHistogramAggregationExplicitBucket = redisotelnative.HistogramAggregationExplicitBucket
-
-	// RedisHistogramAggregationBase2Exponential uses base-2 exponential bucket histograms.
-	RedisHistogramAggregationBase2Exponential = redisotelnative.HistogramAggregationBase2Exponential
-)
-
-// MetricsOption configures OpenTelemetry metrics instrumentation.
+// MetricsOption configures Metrics created by NewMetrics.
 type MetricsOption func(*metricsConfig)
 
 type metricsConfig struct {
 	meterProvider metric.MeterProvider
 	clientID      string
 	labels        map[string]string
-
-	metricGroups            RedisMetricGroupFlags
-	includeCommands         []string
-	excludeCommands         []string
-	hidePubSubChannelNames  bool
-	hideStreamNames         bool
-	histogramAggregation    RedisHistogramAggregation
-	histogramAggregationSet bool
-	histogramBuckets        []float64
 }
 
 func defaultMetricsConfig() metricsConfig {
 	return metricsConfig{
-		labels:                 make(map[string]string),
-		metricGroups:           RedisMetricGroupDefault,
-		hidePubSubChannelNames: true,
-		hideStreamNames:        true,
+		labels: make(map[string]string),
 	}
 }
 
-// WithMeterProvider configures the OpenTelemetry meter provider used by native
-// go-redis and xredis wrapper-level metrics.
+// WithMeterProvider sets the OpenTelemetry MeterProvider used to create xredis
+// metrics.
+//
+// A nil provider is ignored. If no provider is configured, NewMetrics uses
+// the global OpenTelemetry MeterProvider.
 func WithMeterProvider(provider metric.MeterProvider) MetricsOption {
 	return func(cfg *metricsConfig) {
 		if provider != nil {
@@ -87,7 +34,9 @@ func WithMeterProvider(provider metric.MeterProvider) MetricsOption {
 	}
 }
 
-// WithClientID configures the client identity attribute for wrapper-level metrics.
+// WithClientID sets the xredis.client.id attribute on xredis metrics.
+//
+// An empty ID is ignored.
 func WithClientID(id string) MetricsOption {
 	return func(cfg *metricsConfig) {
 		if id != "" {
@@ -96,9 +45,13 @@ func WithClientID(id string) MetricsOption {
 	}
 }
 
-// WithLabel adds a string attribute to wrapper-level metrics.
+// WithLabel adds a static attribute to xredis metrics.
 //
-// Prefer stable, low-cardinality values.
+// An empty key is ignored. When the same label key is configured more than
+// once, the last value wins.
+//
+// The xredis. attribute namespace is reserved for instrumentation emitted by
+// this package. Prefer stable, low-cardinality values.
 func WithLabel(key, value string) MetricsOption {
 	return func(cfg *metricsConfig) {
 		if key != "" {
@@ -107,66 +60,22 @@ func WithLabel(key, value string) MetricsOption {
 	}
 }
 
-// WithLabels adds string attributes to wrapper-level metrics.
+// WithLabels adds static attributes to xredis metrics.
 //
-// Labels are merged with previously configured labels. When the same key is
-// configured more than once, the last value wins.
+// The map is copied when the option is created, so later changes to the
+// original map do not affect the option. Empty keys are ignored. When the same
+// label key is configured more than once, the last value wins.
+//
+// The xredis. attribute namespace is reserved for instrumentation emitted by
+// this package. Prefer stable, low-cardinality values.
 func WithLabels(labels map[string]string) MetricsOption {
+	labels = maps.Clone(labels)
+
 	return func(cfg *metricsConfig) {
 		for key, value := range labels {
 			if key != "" {
 				cfg.labels[key] = value
 			}
 		}
-	}
-}
-
-// WithRedisMetricGroups configures enabled native Redis client metric groups.
-func WithRedisMetricGroups(groups RedisMetricGroupFlags) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.metricGroups = groups
-	}
-}
-
-// WithRedisMetricIncludeCommands configures Redis command allow-list for native metrics.
-func WithRedisMetricIncludeCommands(commands ...string) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.includeCommands = slices.Clone(commands)
-	}
-}
-
-// WithRedisMetricExcludeCommands configures Redis command deny-list for native metrics.
-func WithRedisMetricExcludeCommands(commands ...string) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.excludeCommands = slices.Clone(commands)
-	}
-}
-
-// WithRedisMetricHidePubSubChannelNames controls Pub/Sub channel name attributes.
-func WithRedisMetricHidePubSubChannelNames(hide bool) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.hidePubSubChannelNames = hide
-	}
-}
-
-// WithRedisMetricHideStreamNames controls Stream name attributes.
-func WithRedisMetricHideStreamNames(hide bool) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.hideStreamNames = hide
-	}
-}
-
-// WithRedisMetricHistogramAggregation configures native Redis metric histogram aggregation.
-func WithRedisMetricHistogramAggregation(aggregation RedisHistogramAggregation) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.histogramAggregation = aggregation
-		cfg.histogramAggregationSet = true
-	}
-}
-
-// WithRedisMetricHistogramBuckets configures native Redis metric histogram bucket boundaries in seconds.
-func WithRedisMetricHistogramBuckets(buckets ...float64) MetricsOption {
-	return func(cfg *metricsConfig) {
-		cfg.histogramBuckets = slices.Clone(buckets)
 	}
 }

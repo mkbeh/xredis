@@ -1,37 +1,19 @@
 package otelxredis
 
-import (
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-)
+import "go.opentelemetry.io/otel/metric"
 
 const (
 	metricNameCacheRequests           = "xredis.cache.requests"
 	metricNameCacheLoaderDuration     = "xredis.cache.loader.duration"
 	metricNameCacheSingleflightShared = "xredis.cache.singleflight.shared"
-	metricNameLockOperations          = "xredis.lock.operations"
-	metricNameRateLimiterDecisions    = "xredis.rate_limiter.decisions"
-	metricNameRateLimiterDuration     = "xredis.rate_limiter.duration"
 )
 
-const (
-	attrClientID attribute.Key = "xredis.client.id"
-
-	attrCacheOperation     attribute.Key = "xredis.cache.operation"
-	attrCacheResult        attribute.Key = "xredis.cache.result"
-	attrCacheLoaderOutcome attribute.Key = "xredis.cache.loader.outcome"
-
-	attrLockType      attribute.Key = "xredis.lock.type"
-	attrLockOperation attribute.Key = "xredis.lock.operation"
-	attrLockOutcome   attribute.Key = "xredis.lock.outcome"
-
-	attrRateLimiterAlgorithm attribute.Key = "xredis.rate_limiter.algorithm"
-	attrRateLimiterOutcome   attribute.Key = "xredis.rate_limiter.outcome"
-)
-
-var cacheLoaderDurationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
-
-var rateLimiterDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10}
+// cacheLoaderDurationBuckets defines explicit histogram boundaries, in seconds,
+// for cache loader execution duration.
+var cacheLoaderDurationBuckets = []float64{
+	0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25,
+	0.5, 0.75, 1, 2.5, 5, 7.5, 10,
+}
 
 func newCacheMetrics(meter metric.Meter, attributes metric.MeasurementOption) (cacheMetrics, error) {
 	requests, err := meter.Int64Counter(
@@ -54,7 +36,9 @@ func newCacheMetrics(meter metric.Meter, attributes metric.MeasurementOption) (c
 
 	singleflightShared, err := meter.Int64Counter(
 		metricNameCacheSingleflightShared,
-		metric.WithDescription("Number of xredis cache requests that shared a singleflight result."),
+		metric.WithDescription(
+			"Number of xredis cache requests that shared a singleflight result.",
+		),
 	)
 	if err != nil {
 		return cacheMetrics{}, err
@@ -67,6 +51,8 @@ func newCacheMetrics(meter metric.Meter, attributes metric.MeasurementOption) (c
 		attributes:         attributes,
 	}, nil
 }
+
+const metricNameLockOperations = "xredis.lock.operations"
 
 func newLockMetrics(meter metric.Meter, attributes metric.MeasurementOption) (lockMetrics, error) {
 	operations, err := meter.Int64Counter(
@@ -81,6 +67,17 @@ func newLockMetrics(meter metric.Meter, attributes metric.MeasurementOption) (lo
 		operations: operations,
 		attributes: attributes,
 	}, nil
+}
+
+const (
+	metricNameRateLimiterDecisions = "xredis.rate_limiter.decisions"
+	metricNameRateLimiterDuration  = "xredis.rate_limiter.duration"
+)
+
+// rateLimiterDurationBuckets defines explicit histogram boundaries, in seconds,
+// for rate limiter decision duration.
+var rateLimiterDurationBuckets = []float64{
+	0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10,
 }
 
 func newRateLimiterMetrics(meter metric.Meter, attributes metric.MeasurementOption) (rateLimiterMetrics, error) {

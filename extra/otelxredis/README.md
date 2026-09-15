@@ -1,12 +1,9 @@
 # otelxredis
 
-OpenTelemetry metrics integration for `github.com/mkbeh/xredis`.
-
-The module combines native `go-redis` metrics from `redisotel-native` with
-wrapper-level `xredis` metrics for caches, locks, and rate limiters.
+OpenTelemetry metrics integration for `github.com/mkbeh/xredis` wrapper-level operations.
 
 ```go
-metrics, err := otelxredis.InitMetrics(
+metrics, err := otelxredis.NewMetrics(
 	otelxredis.WithMeterProvider(meterProvider),
 	otelxredis.WithClientID("orders-cache"),
 	otelxredis.WithLabel("service", "orders"),
@@ -14,19 +11,27 @@ metrics, err := otelxredis.InitMetrics(
 if err != nil {
 	return err
 }
-defer metrics.Shutdown()
 
 client, err := xredis.NewClient(
-	xredis.WithClientName("orders-cache"),
+	redisOptions,
 	xredis.WithMetrics(metrics),
 )
 ```
 
-A `Metrics` instance may be shared by multiple clients. The application remains
-responsible for shutting down its OpenTelemetry `MeterProvider`.
+A `Metrics` instance may be shared by multiple clients that use the same configured attributes. The application remains responsible for the OpenTelemetry `MeterProvider` lifecycle.
 
-The configured client ID is exposed as `xredis.client.id`, and client labels are
-attached to wrapper-level `xredis.*` metrics. Prefer stable, low-cardinality
-values when using labels with metrics.
+The configured client ID is exposed as `xredis.client.id`, and labels are attached to wrapper-level `xredis.*` metrics. Prefer stable, low-cardinality values.
 
-Native `go-redis` metrics keep the attributes provided by `redisotel-native`.
+Native `go-redis` metrics are configured separately through `redisotel-native`:
+
+```go
+redisMetrics := redisotelnative.NewConfig().
+	WithEnabled(true).
+	WithMeterProvider(meterProvider)
+
+redisObs := redisotelnative.GetObservabilityInstance()
+if err := redisObs.Init(redisMetrics); err != nil {
+	return err
+}
+defer redisObs.Shutdown()
+```
