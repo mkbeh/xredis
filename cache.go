@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"time"
 
 	rdb "github.com/redis/go-redis/v9"
@@ -496,4 +497,32 @@ func normalizeCacheNotFound(err error) error {
 
 func defaultCacheIsNotFound(err error) bool {
 	return errors.Is(err, ErrKeyNotFound) || errors.Is(err, rdb.Nil)
+}
+
+func isRawValueType[T any]() bool {
+	var value T
+
+	switch any(value).(type) {
+	case string, *string,
+		[]byte,
+		int, *int,
+		int8, *int8,
+		int16, *int16,
+		int32, *int32,
+		int64, *int64,
+		uint, *uint,
+		uint8, *uint8,
+		uint16, *uint16,
+		uint32, *uint32,
+		uint64, *uint64,
+		float32, *float32,
+		float64, *float64,
+		bool, *bool,
+		time.Time, *time.Time,
+		time.Duration, *time.Duration,
+		net.IP:
+		return true
+	default:
+		return false
+	}
 }
