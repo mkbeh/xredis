@@ -5,7 +5,7 @@ operations, automatically instrumenting its built-in cache, distributed locks, a
 
 ## Metrics
 
-The `Metrics` type implements the xredis metrics interfaces and records measurements through an OpenTelemetry
+The `Metrics` type implements the `xredis.Metrics` interface and records measurements through an OpenTelemetry
 `MeterProvider`, automatically attaching configured static attributes to all emitted metrics.
 
 | Metric                             | Type      | Description / Attributes                                                                                  |
@@ -19,6 +19,22 @@ The `Metrics` type implements the xredis metrics interfaces and records measurem
 | Rate Limiter                       |           |                                                                                                           |
 | `xredis.rate_limiter.decisions`    | Counter   | Rate limit decisions (`xredis.rate_limiter.algorithm`, `xredis.rate_limiter.outcome`).                    |
 | `xredis.rate_limiter.duration`     | Histogram | Rate limit decision duration in seconds (`xredis.rate_limiter.algorithm`, `xredis.rate_limiter.outcome`). |
+
+### Metric attributes
+
+The metrics use the following OpenTelemetry attributes:
+
+| Attribute                       | Values                                           | Description                                    |
+|:--------------------------------|:-------------------------------------------------|:-----------------------------------------------|
+| `xredis.client.id`              | User-defined                                     | Optional client identity.                      |
+| `xredis.cache.operation`        | `get`, `get_or_load`                             | Cache operation being performed.               |
+| `xredis.cache.result`           | `hit`, `miss`, `negative_hit`, `error`           | Result of the cache lookup.                    |
+| `xredis.cache.loader.outcome`   | `success`, `not_found`, `error`                  | Outcome of the cache loader execution.         |
+| `xredis.lock.type`              | `lease`, `fenced`                                | Type of distributed lock.                      |
+| `xredis.lock.operation`         | `acquire`, `extend`, `unlock`                    | Lock operation being performed.                |
+| `xredis.lock.outcome`           | `success`, `contended`, `not_owned`, `error`     | Result of the lock operation.                  |
+| `xredis.rate_limiter.algorithm` | `fixed_window`, `sliding_window`, `token_bucket` | Rate-limiting algorithm used for the decision. |
+| `xredis.rate_limiter.outcome`   | `allowed`, `rejected`, `error`                   | Result of the rate-limit decision.             |
 
 ### Getting started
 
@@ -38,16 +54,18 @@ meterProvider, err := initMeterProvider()
 
 // Create a new otelxredis metrics.
 metrics, err := otelxredis.NewMetrics(
-    otelxredis.WithMeterProvider(meterProvider),
+otelxredis.WithMeterProvider(meterProvider),
 )
 
 // Create new xredis client with metrics.
 client, err := xredis.NewClient(
-    redisOptions,
+redisOptions,
 
-    // Register metrics.
-    xredis.WithMetrics(metrics),
+// Register metrics.
+xredis.WithMetrics(metrics),
 )
 ```
 
 <!-- @formatter:on -->
+
+For a complete OpenTelemetry setup with metrics and tracing, see [examples/otel](../../examples/otel).

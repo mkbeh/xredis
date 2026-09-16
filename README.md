@@ -41,12 +41,9 @@ Runnable examples are available in the [examples](examples) directory.
   unlink operations.
 * **Topology-wide scans** — cursor-based iteration across Redis Cluster masters and Redis Ring shards, with type
   filtering and per-key or per-batch handlers.
-* **Distributed tracing** — OpenTelemetry command tracing through `redisotel`, with configurable filters, attributes,
-  and caller information.
-* **Metrics** — native `go-redis` metrics together with wrapper-level OpenTelemetry instrumentation for caches, locks,
-  and rate limiters.
-* **Production configuration** — TLS and mTLS, ACL authentication, dynamic credential providers, retries, backoff,
-  timeouts, custom dialers, and hooks.
+* **Distributed tracing** — OpenTelemetry command tracing through `redisotel` on the underlying Redis client.
+* **Metrics** — wrapper-level OpenTelemetry instrumentation for caches, locks, and rate limiters through
+  `extra/otelxredis`.
 
 ## Installation
 
@@ -58,22 +55,18 @@ go get github.com/mkbeh/xredis
 
 ## Quick start
 
-The following example demonstrates how to initialize the `xredis` client with client options, verify the connection, and
-perform basic key-value operations with TTL support.
-
+The following example demonstrates how to initialize the `xredis` client, verify the connection, and perform basic
+key-value operations with TTL support.
 
 <!-- @formatter:off -->
 ```go
 ctx := context.Background()
 
 // Initialize the client
-client, err := xredis.NewClient(
-    xredis.WithClientConfig(&xredis.ClientConfig{
-        Addr: "localhost:6379",
-        DB:   0,
-    }),
-    xredis.WithClientID("example-client"),
-)
+client, err := xredis.NewClient(&rdb.Options{
+    Addr: "localhost:6379",
+    DB:   0,
+})
 if err != nil {
     return err
 }
@@ -108,30 +101,15 @@ fmt.Println(value) // Outputs: hello from xredis
 
 ## Clients and topologies
 
-`xredis` provides dedicated constructors for each supported Redis topology, with a specialized configuration struct for
-its connection and routing settings.
+`xredis` provides dedicated constructors for each supported Redis topology.
 
-| Topology                           | Constructor                | Configuration    |
-| :--------------------------------- | :------------------------- | :--------------- |
-| **Standalone Redis**               | `NewClient`                | `ClientConfig`   |
-| **Redis Cluster**                  | `NewClusterClient`         | `ClusterConfig`  |
-| **Redis Sentinel / Failover**      | `NewFailoverClient`        | `FailoverConfig` |
-| **Redis Sentinel with replica routing**        | `NewFailoverClusterClient` | `FailoverConfig` |
-| **Client-side sharding with Ring** | `NewRing`                  | `RingConfig`     |
-
-### Configuration capabilities
-
-Configuration structs are plain Go structs and can be loaded with any configuration library. For a complete
-environment-based setup, see [examples/env](examples/env).
-
-Configuration structs and constructor options cover:
-
-* **Connectivity and pools** — custom dialers, connection pooling, and routing strategies.
-* **Security and authentication** — ACL credentials, dynamic credential providers, TLS, and mTLS.
-* **Protocol and lifecycle** — RESP protocol selection, client identity, and hooks.
-* **Data encoding** — configurable codecs for structured values.
-* **Resilience** — retries, backoff policies, and fine-grained operation timeouts.
-* **Observability** — OpenTelemetry tracing and custom metric labels.
+| Topology                              | Constructor                | Redis options          |
+|:--------------------------------------|:---------------------------|:-----------------------|
+| **Standalone Redis**                  | `NewClient`                | `*rdb.Options`         |
+| **Redis Cluster**                     | `NewClusterClient`         | `*rdb.ClusterOptions`  |
+| **Redis Sentinel / Failover**         | `NewFailoverClient`        | `*rdb.FailoverOptions` |
+| **Redis Sentinel / Failover Cluster** | `NewFailoverClusterClient` | `*rdb.FailoverOptions` |
+| **Client-side sharding with Ring**    | `NewRing`                  | `*rdb.RingOptions`     |
 
 ### Cluster and sharding considerations
 
@@ -141,8 +119,8 @@ When using `xredis` with Redis Cluster or Redis Ring, keep the following topolog
   single Redis key and do not require cross-slot coordination.
 * **Fenced locks** — fenced locks use both a lock key and a counter key. In Redis Cluster, both keys must map to the
   same hash slot. Use matching hash tags, such as `lock:{order:42}` and `fence:{order:42}`.
-* **Bulk helpers** — helpers such as `DeleteMany` and `UnlinkMany` use independent single-key commands where required,
-  avoiding multi-key `CROSSSLOT` errors. Large inputs should still be divided into reasonable batches.
+* **Bulk helpers** — helpers such as `DeleteKeys` and `UnlinkKeys` use independent single-key commands on Cluster
+  and Ring so each key is routed to its node or shard. Large inputs should still be divided into reasonable batches.
 * **Topology-wide scans** — Redis Cluster scan cursors are node-local. The topology-wide scan helpers iterate over each
   master node independently. Redis Ring scans iterate over each live shard.
 * **Raw client access** — commands executed through `Client.Raw()` bypass the higher-level topology-aware helpers.
@@ -154,17 +132,13 @@ The following example initializes a Redis Cluster client with a set of startup n
 
 <!-- @formatter:off -->
 ```go
-config := &xredis.ClusterConfig{
+client, err := xredis.NewClusterClient(&rdb.ClusterOptions{
     Addrs: []string{
         "localhost:7000",
         "localhost:7001",
         "localhost:7002",
     },
-}
-
-client, err := xredis.NewClusterClient(
-    xredis.WithClusterConfig(config),
-)
+})
 if err != nil {
     log.Fatalf("create Redis Cluster client: %v", err)
 }
@@ -244,7 +218,7 @@ To use another serialization format, such as MessagePack or Protobuf, configure 
 <!-- @formatter:off -->
 ```go
 client, err := xredis.NewClient(
-    xredis.WithClientConfig(cfg),
+    &rdb.Options{},
     xredis.WithCodec(customCodec),
 )
 ```
@@ -257,7 +231,8 @@ client, err := xredis.NewClient(
 ### Redis hashes
 
 `HSet` supports flat field-value pairs, slices, maps, structs, and pointers to structs. It can also apply an expiration
-TTL to the hash key. Struct field names are configured using standard `redis` tags.
+TTL to the hash key. Struct field names are configured using standard `redis` tags. A zero TTL preserves the existing
+expiration; a positive TTL updates it.
 
 `HGetAll` can scan the resulting hash back into a struct:
 
@@ -422,8 +397,8 @@ if !deleted {
 <!-- @formatter:on -->
 
 > [!NOTE]
-> Hash-field compare operations preserve the existing expiration of the hash key. If `HFieldCompareAndDelete` removes the
-> last remaining field, Redis removes the hash key.
+> Hash-field compare operations preserve the existing expiration of the hash key. If `HFieldCompareAndDelete` removes
+> the last remaining field, Redis removes the hash key.
 
 ### Versioned structured values
 
@@ -681,12 +656,12 @@ and Ring clients.
 
 ### Pipeline helpers
 
-Pipeline helpers execute independent single-key commands in batches:
+Write helpers execute independent single-key commands in batches:
 
 <!-- @formatter:off -->
 ```go
 // Store multiple values in a single pipeline execution.
-err := client.SetMany(ctx, []xredis.SetItem{
+err := client.SetItems(ctx, []xredis.SetItem{
     {
         Key:        "session:101",
         Value:      "user:42",
@@ -704,12 +679,15 @@ if err != nil {
 ```
 <!-- @formatter:on -->
 
-`SetMany` and `SetStructMany` batch string-value writes, `HSetMany` batches hash writes, and `DeleteMany` and
-`UnlinkMany` batch key removal.
+`SetItems` and `SetStructItems` batch string-value writes, `HSetItems` batches hash writes, and `DeleteKeys` and
+`UnlinkKeys` batch key removal.
 
 > [!IMPORTANT]
-> For Redis Cluster and Ring clients, `DeleteMany` and `UnlinkMany` use pipelined single-key commands to avoid multi-key
-> cross-slot errors. Large inputs should be split into reasonable batches at the call site.
+> Pipeline execution is not atomic: some commands may succeed even if another command fails.
+>
+> For Redis Cluster and Ring clients, `DeleteKeys` and `UnlinkKeys` use pipelined single-key commands so each key is
+routed to its node or shard. Standalone clients use a single multi-key command. Large inputs should be split into
+reasonable batches at the call site.
 
 ### Topology-wide scans
 
@@ -736,117 +714,30 @@ if err != nil {
 
 Available scan helpers include:
 
-* `Scan` — reads one cursor page.
+* `Scan` — reads one cursor page without traversing the topology.
 * `ScanAll` — collects all matching keys.
 * `ScanEach` — invokes a handler for each key.
-* `ScanEachBatch` — invokes a handler for each page.
+* `ScanEachBatch` — invokes a handler for each non-empty page.
 * `ScanDelete` and `ScanUnlink` — remove matching keys.
+
+Only `Scan` uses `ScanOptions.Cursor`; the full-scan helpers always start from cursor `0`.
 
 > [!NOTE]
 > Redis `SCAN` provides weakly consistent iteration. Keys may be added, removed, or returned more than once while a scan
 > is in progress. Handlers should therefore be idempotent.
+>
+> On Redis Cluster and Ring, `ScanEach` and `ScanEachBatch` handlers may run concurrently across nodes or shards.
+> Synchronize access to shared state.
 >
 > `Count` is a work-size hint to Redis, not a guaranteed batch size. Topology-wide scan and removal operations are not
 > atomic.
 
 ## Observability
 
-`xredis` integrates with OpenTelemetry for Redis metrics and distributed tracing.
+`xredis` supports OpenTelemetry metrics for caches, distributed locks, and rate limiters through
+[`otelxredis`](extra/otelxredis). Redis command tracing is configured through `redisotel`.
 
-### Metrics
-
-Initialize observability once before creating Redis clients. Call the returned shutdown function during application
-shutdown:
-
-<!-- @formatter:off -->
-```go
-// Initialize global Redis metrics instrumentation.
-shutdownMetrics, err := xredis.InitObservability(
-    xredis.WithMeterProvider(meterProvider),
-)
-if err != nil {
-    log.Fatalf("initialize Redis metrics: %v", err)
-}
-
-defer func() {
-    if err := shutdownMetrics(); err != nil {
-        log.Printf("shutdown Redis metrics: %v", err)
-    }
-}()
-
-// Create a client with service-level metric labels.
-client, err := xredis.NewClient(
-    xredis.WithAddr("localhost:6379"),
-    xredis.WithMetricLabel("service", "orders-api"),
-    xredis.WithMetricLabel("environment", "production"),
-)
-if err != nil {
-    log.Fatalf("create Redis client: %v", err)
-}
-defer client.Close()
-```
-<!-- @formatter:on -->
-
-`InitObservability` enables native `go-redis` metrics through `redisotel-native` together with `xredis` wrapper-level
-metrics.
-
-Native metric groups, command filters, histogram aggregation, and histogram buckets are configured through
-`ObservabilityOption` values. Additional bounded labels can be attached to an individual client with `WithMetricLabel`.
-
-> [!WARNING]
-> Metric label values should have low and bounded cardinality. Avoid identifiers such as Redis keys, user IDs, request
-> IDs, or other values that can create an unbounded number of time series.
-
-Prometheus exporters expose the wrapper-level OpenTelemetry instruments with the following names:
-
-| Prometheus metric                              | Type      | Description                                                 |
-| :--------------------------------------------- | :-------- | :---------------------------------------------------------- |
-| `redis_client_cache_requests_total`            | Counter   | Counts cache lookups by operation and result.               |
-| `redis_client_cache_loader_duration_seconds`   | Histogram | Measures cache loader execution duration.                   |
-| `redis_client_cache_singleflight_shared_total` | Counter   | Counts requests that received a shared singleflight result. |
-| `redis_client_lock_operations_total`           | Counter   | Counts lease and fenced lock operations by outcome.         |
-| `redis_client_rate_limiter_decisions_total`    | Counter   | Counts rate-limit decisions by algorithm and outcome.       |
-| `redis_client_rate_limiter_duration_seconds`   | Histogram | Measures rate-limit decision duration.                      |
-
-### Metric labels
-
-The following labels are exposed by the wrapper-level `xredis` metrics and can be used to filter, group, and aggregate
-telemetry data:
-
-| Label                                 | Values                                           | Description                                   |
-| :------------------------------------ | :----------------------------------------------- | :-------------------------------------------- |
-| `redis_client_cache_operation`        | `get`, `get_or_load`                             | Cache operation being performed               |
-| `redis_client_cache_result`           | `hit`, `miss`, `negative_hit`, `error`           | Result of the cache lookup                    |
-| `redis_client_cache_loader_outcome`   | `success`, `not_found`, `error`                  | Outcome of the cache loader execution         |
-| `redis_client_lock_type`              | `lease`, `fenced`                                | Type of distributed lock                      |
-| `redis_client_lock_operation`         | `acquire`, `extend`, `unlock`                    | Lock operation being performed                |
-| `redis_client_lock_outcome`           | `success`, `contended`, `not_owned`, `error`     | Result of the lock operation                  |
-| `redis_client_rate_limiter_algorithm` | `fixed_window`, `sliding_window`, `token_bucket` | Rate-limiting algorithm used for the decision |
-| `redis_client_rate_limiter_outcome`   | `allowed`, `rejected`, `error`                   | Result of the rate-limit decision             |
-
-### Tracing
-
-Tracing is configured separately for each Redis client through the `redisotel` integration:
-
-<!-- @formatter:off -->
-```go
-client, err := xredis.NewClient(
-    xredis.WithClientConfig(cfg),
-    xredis.WithTracerProvider(tracerProvider),
-    xredis.WithTracingDBStatement(false),
-    xredis.WithTracingCallerEnabled(true),
-)
-```
-<!-- @formatter:on -->
-
-Additional tracing options support custom span attributes, DB system attributes, command and pipeline filters, dial
-filters, and caller information.
-
-> [!WARNING]
-> `WithTracingDBStatement(true)` can include Redis command contents in spans. Avoid enabling it when commands may
-> contain sensitive keys, values, credentials, or personally identifiable information.
-
-For a complete OTLP tracing setup with HTTP parent spans and Jaeger, see [examples/otel](examples/otel).
+See [examples/otel](examples/otel) for a complete setup with metrics and tracing.
 
 ## License
 
