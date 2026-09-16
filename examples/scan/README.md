@@ -11,14 +11,14 @@ This example shows how to use Redis SCAN helpers with `xredis`.
 * **Pattern Cleanup** — remove matching keys with `ScanDelete` or `ScanUnlink`.
 * **Topology-Wide Scans** — scan every master or live shard for Redis Cluster and Ring clients.
 
-### Configuration
+## Configuration
 
 ```text
 REDIS_ADDR=localhost:6379
 HTTP_ADDR=localhost:8080
 ```
 
-### Local Redis setup
+## Local Redis setup
 
 Examples can use the local Redis setup from `examples/docker-compose.yml`.
 
@@ -57,7 +57,7 @@ Password: empty
 Database index: 0
 ```
 
-### Run
+## Run
 
 From this directory:
 
@@ -77,13 +77,13 @@ The HTTP server starts on:
 localhost:8080
 ```
 
-### Health check
+## Health check
 
 ```shell
 curl 'localhost:8080/healthz'
 ```
 
-### Seed sample keys
+## Seed sample keys
 
 Creates string, hash, stream, delete, and unlink sample keys.
 
@@ -98,9 +98,11 @@ curl -X POST 'localhost:8080/sample/7'
 curl -X POST 'localhost:8080/sample/100'
 ```
 
-### Page scan
+## Page scan
 
 `Scan` reads one cursor page.
+
+`count` is a work-size hint, not a guaranteed page size.
 
 ```shell
 curl 'localhost:8080/scan/page?match=xredis:scan:*&count=5'
@@ -121,7 +123,7 @@ The scan is complete when `next_cursor` is `0`.
 `Scan` represents one cursor sequence. For topology-wide Cluster or Ring scans,
 use `ScanAll`, `ScanEach`, or `ScanEachBatch`.
 
-### Scan all
+## Scan all
 
 `ScanAll` scans all matching keys and returns them as a slice.
 
@@ -134,7 +136,7 @@ Redis SCAN may return the same key more than once during a full iteration, so
 
 For large keyspaces, prefer `ScanEach` or `ScanEachBatch` because `ScanAll` stores all keys in memory.
 
-### Scan batches
+## Scan batches
 
 `ScanEachBatch` calls the handler once per SCAN page.
 
@@ -145,7 +147,7 @@ run concurrently. Shared state in the callback must be synchronized.
 curl 'localhost:8080/scan/batches?match=xredis:scan:*&count=5'
 ```
 
-### Type-filtered scan
+## Type-filtered scan
 
 Scan only string keys:
 
@@ -165,7 +167,7 @@ Scan only stream keys:
 curl 'localhost:8080/scan/all?match=xredis:scan:*&type=stream&count=100'
 ```
 
-### Delete by pattern
+## Delete by pattern
 
 `ScanDelete` scans keys and deletes them using pipelined single-key `DEL` commands.
 
@@ -179,7 +181,7 @@ Check that delete sample keys are gone:
 curl 'localhost:8080/scan/all?match=xredis:scan:delete:42:*&count=100'
 ```
 
-### Unlink by pattern
+## Unlink by pattern
 
 `ScanUnlink` scans keys and unlinks them using pipelined single-key `UNLINK` commands.
 
@@ -196,7 +198,7 @@ Check that unlink sample keys are gone:
 curl 'localhost:8080/scan/all?match=xredis:scan:unlink:42:*&count=100'
 ```
 
-### Cleanup
+## Cleanup
 
 Deletes all sample keys.
 
@@ -204,7 +206,7 @@ Deletes all sample keys.
 curl -X DELETE 'localhost:8080/sample'
 ```
 
-### Redis Cluster note
+## Redis Cluster note
 
 `ScanEach`, `ScanEachBatch`, `ScanAll`, `ScanDelete`, and `ScanUnlink` are
 topology-aware.
@@ -219,7 +221,7 @@ nodes or shards. Synchronize access to shared state.
 `ScanDelete` and `ScanUnlink` use pipelined single-key commands to avoid
 multi-key hash-slot constraints.
 
-### Stop services
+## Stop services
 
 From the repository root:
 

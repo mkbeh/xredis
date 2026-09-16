@@ -18,12 +18,11 @@ const (
 	defaultHTTP  = "localhost:8080"
 	defaultRedis = "localhost:6379"
 
-	leaseLockTTL      = 5 * time.Second
-	shortLockTTL      = 1 * time.Second
-	extendedLockTTL   = 5 * time.Second
-	fencedLockTTL     = 5 * time.Second
-	fencingCounterTTL = 7 * 24 * time.Hour
-	unlockTimeout     = time.Second
+	leaseLockTTL    = 5 * time.Second
+	shortLockTTL    = 1 * time.Second
+	extendedLockTTL = 5 * time.Second
+	fencedLockTTL   = 5 * time.Second
+	unlockTimeout   = time.Second
 )
 
 var (
@@ -207,7 +206,6 @@ func fencedLockWorkHandler(w http.ResponseWriter, r *http.Request) {
 		key,
 		fenceKey,
 		fencedLockTTL,
-		xredis.WithFencingCounterTTL(fencingCounterTTL),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -255,7 +253,6 @@ func staleFencingTokenHandler(w http.ResponseWriter, r *http.Request) {
 		key,
 		fenceKey,
 		fencedLockTTL,
-		xredis.WithFencingCounterTTL(fencingCounterTTL),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -279,7 +276,6 @@ func staleFencingTokenHandler(w http.ResponseWriter, r *http.Request) {
 		key,
 		fenceKey,
 		fencedLockTTL,
-		xredis.WithFencingCounterTTL(fencingCounterTTL),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -357,7 +353,7 @@ func unlockSafely(lock unlocker) {
 }
 
 func leaseLockKey(id string) string {
-	return "xredis:locks:simple:" + id
+	return "xredis:locks:lease:" + id
 }
 
 func fencedLockKey(id string) string {

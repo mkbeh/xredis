@@ -9,7 +9,7 @@ This directory contains runnable examples demonstrating the main features and us
 | [`cas`](cas)                   | Atomic compare-and-swap and compare-and-delete operations for raw and structured values  |
 | [`locks`](locks)               | Distributed coordination with lease locks and fenced locks                               |
 | [`rate_limiter`](rate_limiter) | Distributed rate limiting with fixed window, sliding window, and token bucket algorithms |
-| [`pipeline`](pipeline)         | Batched writes, hash updates, delete, and unlink helpers                                 |
+| [`pipeline`](pipeline)         | Batched raw and structured writes, delete, and unlink helpers                            |
 | [`scan`](scan)                 | Cursor scans, topology-wide iteration, key-type filters, delete, and unlink operations   |
 | [`otel`](otel)                 | OpenTelemetry metrics and tracing with Prometheus, OTLP, and Jaeger                      |
 

@@ -94,10 +94,6 @@ curl -i -X POST 'localhost:8080/allow/7'
 
 This endpoint allows 5 requests per 30 seconds for one user key.
 
-```shell
-curl -i -X POST 'localhost:8080/fixed-window/42'
-```
-
 Run several requests:
 
 ```shell
@@ -124,10 +120,6 @@ Retry-After
 
 This endpoint allows 5 requests within the last 30 seconds.
 
-```shell
-curl -i -X POST 'localhost:8080/sliding-window/42'
-```
-
 Run several requests:
 
 ```shell
@@ -147,10 +139,6 @@ window.
 ## Token-bucket flow
 
 This endpoint refills 5 tokens per 30 seconds and allows bursts up to 10 requests.
-
-```shell
-curl -i -X POST 'localhost:8080/token-bucket/42'
-```
 
 Run several requests:
 
