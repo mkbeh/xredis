@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.5.0
+
+This release adopts native `go-redis` options and separates the core client from OpenTelemetry instrumentation.
+
+### Breaking changes
+
+* **Client configuration** — `NewClient`, `NewClusterClient`, `NewFailoverClient`, `NewFailoverClusterClient`, and
+  `NewRing` now accept native `go-redis` options directly. Removed the wrapper configuration layer and the root
+  `WithClientName` and `WithClientID` options. Configure Redis client names through the native `ClientName` field.
+* **Options validation** — Replaced `ErrInvalidConfig` with `ErrInvalidOptions`. Client constructors now reject `nil`
+  Redis options.
+* **OpenTelemetry setup** — Moved wrapper-level OpenTelemetry metrics to the optional `extra/otelxredis` module.
+  Configure native Redis metrics through `redisotel-native` and command tracing through `redisotel` on `Client.Raw()`.
+
+### Added
+
+* **Metrics API** — Added `Metrics`, `ClientMetrics`, `CacheMetrics`, `LockMetrics`, and `RateLimiterMetrics` for
+  instrumentation independent of OpenTelemetry. Implementations attach through `WithMetrics`.
+
+### Changed
+
+* **Functional options** — Standardized client, cache, versioned store, fenced lock, and rate limiter options as
+  function types.
+* **Core dependencies** — Removed direct OpenTelemetry and Redis telemetry integration dependencies from the root Go
+  module.
+* **Examples and documentation** — Updated examples and READMEs for the new API, with separate configuration of native
+  Redis telemetry and wrapper-level metrics.
+
+---
+
+## extra/otelxredis/v0.1.0
+
+Initial release of `otelxredis`, providing OpenTelemetry metrics for `xredis` cache, distributed lock, and rate limiter
+operations.
+
+### Added
+
+* **Metrics integration** — `NewMetrics` creates instrumentation using a configured or global OpenTelemetry
+  `MeterProvider` and integrates with clients through `xredis.WithMetrics`.
+* **Cache metrics** — Counters for cache requests and requests that shared a `singleflight` result, together with a
+  histogram of cache loader execution duration.
+* **Lock metrics** — A counter for lease and fenced lock operations, with lock type, operation, and outcome attributes.
+* **Rate limiter metrics** — A decision counter and duration histogram with algorithm and outcome attributes.
+* **Static attributes** — `WithClientID`, `WithLabel`, and `WithLabels` configure attributes attached to all emitted
+  metrics. A metrics instance can be shared across multiple clients using the same static attributes.
+* **Tests and documentation** — Added tests for metric instruments, attributes, options, units, and histogram
+  boundaries, together with a metrics reference and an OpenTelemetry integration example.
+
 ## v0.4.0
 
 This release improves typed cache decoding performance and makes hash-field compare operations more explicit.
