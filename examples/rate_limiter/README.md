@@ -1,14 +1,14 @@
-# Redis Rate Limiter REST API
+## Example: Redis Rate Limiter REST API
 
 This example shows how to use Redis-backed application rate limiting with `xredis`.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Fixed-window rate limiting with `AllowFixedWindow`
-* Default `Allow`, which uses fixed-window rate limiting
-* Sliding-window rate limiting with `AllowSlidingWindow`
-* Token-bucket rate limiting with `AllowTokenBucket`
-* HTTP 429 responses with `Retry-After` and `X-RateLimit-*` headers
+* **Fixed Window** — enforce a fixed request limit with `AllowFixedWindow`, or use the default `Allow` method.
+* **Sliding Window** — enforce a rolling request limit with `AllowSlidingWindow`.
+* **Token Bucket** — allow controlled bursts with `AllowTokenBucket`.
+* **HTTP Rate Limits** — return HTTP 429 responses with `Retry-After` and `X-RateLimit-*` headers.
+* **Cleanup** — remove known sample rate-limit keys with `DeleteKeys`.
 
 ## Configuration
 
@@ -76,50 +76,6 @@ The HTTP server starts on:
 localhost:8080
 ```
 
-## Metrics
-
-Prometheus metrics are available at:
-
-```shell
-curl 'http://localhost:8080/metrics'
-```
-
-Useful rate limiter metrics for this example include:
-
-```text
-redis_client_rate_limiter_decisions_total
-redis_client_rate_limiter_duration_seconds
-```
-
-Rate limit decisions:
-
-```text
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="fixed_window",redis_client_rate_limiter_outcome="allowed"}
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="fixed_window",redis_client_rate_limiter_outcome="rejected"}
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="sliding_window",redis_client_rate_limiter_outcome="allowed"}
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="sliding_window",redis_client_rate_limiter_outcome="rejected"}
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="token_bucket",redis_client_rate_limiter_outcome="allowed"}
-redis_client_rate_limiter_decisions_total{redis_client_rate_limiter_algorithm="token_bucket",redis_client_rate_limiter_outcome="rejected"}
-```
-
-Check rate limit decision metrics:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_decisions_total'
-```
-
-Check rate limiter duration metrics:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_duration_seconds'
-```
-
-Check duration counts by algorithm and outcome:
-
-```shell
-curl -s 'http://localhost:8080/metrics'   | grep 'redis_client_rate_limiter_duration_seconds_count'
-```
-
 ## Health check
 
 ```shell
@@ -131,7 +87,7 @@ curl 'localhost:8080/healthz'
 `Allow` uses fixed-window rate limiting and is equivalent to `AllowFixedWindow`.
 
 ```shell
-curl -i -X POST 'localhost:8080/allow/42'
+curl -i -X POST 'localhost:8080/allow/7'
 ```
 
 ## Fixed-window flow
@@ -220,7 +176,7 @@ Some tokens should be refilled.
 
 ## Cleanup
 
-Deletes known sample rate-limit keys with `DeleteMany`.
+Deletes known sample rate-limit keys with `DeleteKeys`.
 
 ```shell
 curl -X DELETE 'localhost:8080/sample'
