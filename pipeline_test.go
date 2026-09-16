@@ -7,7 +7,6 @@ import (
 	. "github.com/bsm/ginkgo/v2"
 	. "github.com/bsm/gomega"
 	"github.com/mkbeh/xredis"
-	rdb "github.com/redis/go-redis/v9"
 )
 
 var errPipelineCodec = errors.New("pipeline codec error")
@@ -45,7 +44,7 @@ var _ = Describe("Pipeline", func() {
 		Expect(client.Close()).To(Succeed())
 	})
 
-	Describe("SetMany", func() {
+	Describe("SetItems", func() {
 		It("stores multiple raw Redis values", func() {
 			err := client.SetItems(ctx, []xredis.SetItem{
 				{
@@ -148,7 +147,7 @@ var _ = Describe("Pipeline", func() {
 		})
 	})
 
-	Describe("SetStructMany", func() {
+	Describe("SetStructItems", func() {
 		It("encodes and stores multiple values with the client codec", func() {
 			profile := pipelineProfile{
 				ID:     "42",
@@ -217,20 +216,12 @@ var _ = Describe("Pipeline", func() {
 		})
 
 		It("returns codec errors without executing queued commands", func() {
-			codecClient, err := xredis.NewClient(
-				&rdb.Options{
-					Addr:       redisAddr,
-					DB:         testDB,
-					ClientName: "xredis-pipeline-codec-test",
-				},
-				xredis.WithCodec(failingPipelineCodec{}),
-			)
-			Expect(err).NotTo(HaveOccurred())
-			defer func() {
+			codecClient := newTestClient(xredis.WithCodec(failingPipelineCodec{}))
+			DeferCleanup(func() {
 				Expect(codecClient.Close()).To(Succeed())
-			}()
+			})
 
-			err = codecClient.SetStructItems(ctx, []xredis.SetItem{
+			err := codecClient.SetStructItems(ctx, []xredis.SetItem{
 				{
 					Key:   "encoded:first",
 					Value: "first",
@@ -242,11 +233,11 @@ var _ = Describe("Pipeline", func() {
 			})
 			Expect(err).To(MatchError(errPipelineCodec))
 
-			exists, err := client.Exists(ctx, "encoded:first")
+			exists, err := codecClient.Exists(ctx, "encoded:first")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
 
-			exists, err = client.Exists(ctx, "encoded:second")
+			exists, err = codecClient.Exists(ctx, "encoded:second")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
 		})
@@ -280,7 +271,7 @@ var _ = Describe("Pipeline", func() {
 		})
 	})
 
-	Describe("HSetMany", func() {
+	Describe("HSetItems", func() {
 		It("sets fields in multiple hashes", func() {
 			Expect(client.HSetItems(ctx, []xredis.HSetItem{
 				{
@@ -395,7 +386,7 @@ var _ = Describe("Pipeline", func() {
 		})
 	})
 
-	Describe("DeleteMany", func() {
+	Describe("DeleteKeys", func() {
 		It("deletes multiple existing keys and ignores missing keys", func() {
 			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{Key: "delete:1", Value: "one"},
@@ -423,7 +414,7 @@ var _ = Describe("Pipeline", func() {
 		})
 	})
 
-	Describe("UnlinkMany", func() {
+	Describe("UnlinkKeys", func() {
 		It("unlinks multiple existing keys and ignores missing keys", func() {
 			Expect(client.SetItems(ctx, []xredis.SetItem{
 				{Key: "unlink:1", Value: "one"},

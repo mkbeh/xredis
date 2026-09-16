@@ -18,7 +18,7 @@ const (
 )
 
 var (
-	ctx       = context.TODO()
+	ctx       = context.Background()
 	redisAddr = defaultRedisAddr
 )
 
@@ -40,7 +40,9 @@ var _ = BeforeSuite(func() {
 	Expect(client.Ping(ctx)).To(Succeed())
 })
 
-func newTestClient() *xredis.Client {
+func newTestClient(opts ...xredis.Option) *xredis.Client {
+	GinkgoHelper()
+
 	client, err := xredis.NewClient(
 		&rdb.Options{
 			Addr:         redisAddr,
@@ -50,6 +52,7 @@ func newTestClient() *xredis.Client {
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 5 * time.Second,
 		},
+		opts...,
 	)
 	Expect(err).NotTo(HaveOccurred())
 

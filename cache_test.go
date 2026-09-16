@@ -56,7 +56,52 @@ var _ = Describe("Cache", func() {
 		Expect(client.Close()).To(Succeed())
 	})
 
-	Describe("type validation", func() {
+	Describe("construction", func() {
+		It("rejects a nil client", func() {
+			cache, err := xredis.NewCache[cacheUser](nil)
+			Expect(err).To(MatchError(xredis.ErrInvalidCache))
+			Expect(cache).To(BeNil())
+		})
+
+		It("creates a cache bound to the client", func() {
+			cache, err := client.Cache[cacheUser](
+				xredis.WithCachePrefix("cache:bound:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := cacheUser{ID: "42", Name: "Ada", Active: true}
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+
+			actual, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(actual).To(Equal(expected))
+		})
+
+		It("rejects negative duration options", func() {
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCacheTTL(-time.Second),
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(cache).To(BeNil())
+
+			cache, err = xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCacheJitter(-time.Second),
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(cache).To(BeNil())
+
+			cache, err = xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCacheNegativeTTL(-time.Second),
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(cache).To(BeNil())
+		})
+
 		It("rejects interface cache types", func() {
 			cache, err := xredis.NewCache[any](
 				client,
@@ -193,6 +238,26 @@ var _ = Describe("Cache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeTrue())
 			Expect(value).To(Equal(expected))
+		})
+	})
+
+	Describe("entries", func() {
+		It("deletes a cached value", func() {
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:delete:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := cacheUser{ID: "42", Name: "Ada"}
+			Expect(cache.Set(ctx, "42", expected)).To(Succeed())
+			Expect(cache.Delete(ctx, "42")).To(Succeed())
+
+			value, ok, err := cache.Get(ctx, "42")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+			Expect(value).To(Equal(cacheUser{}))
 		})
 	})
 
@@ -497,6 +562,19 @@ var _ = Describe("Cache", func() {
 	})
 
 	Describe("loader errors", func() {
+		It("rejects a nil loader", func() {
+			cache, err := xredis.NewCache[cacheUser](
+				client,
+				xredis.WithCachePrefix("cache:nil-loader:"),
+				xredis.WithCacheTTL(time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			value, err := cache.GetOrLoad(ctx, "42", nil)
+			Expect(err).To(MatchError(xredis.ErrInvalidCacheLoader))
+			Expect(value).To(Equal(cacheUser{}))
+		})
+
 		It("classifies loader failures and preserves the original error", func() {
 			errLoader := errors.New("database unavailable")
 

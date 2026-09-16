@@ -7,7 +7,6 @@ import (
 	. "github.com/bsm/ginkgo/v2"
 	. "github.com/bsm/gomega"
 	"github.com/mkbeh/xredis"
-	rdb "github.com/redis/go-redis/v9"
 )
 
 type testMetrics struct {
@@ -21,32 +20,58 @@ func (m *testMetrics) Register() xredis.ClientMetrics {
 	return m.metrics
 }
 
-type testCacheMetrics struct {
-	requests int
+type testCacheRequest struct {
+	operation string
+	result    string
 }
 
-func (m *testCacheMetrics) RecordRequest(context.Context, string, string) {
-	m.requests++
+type testCacheMetrics struct {
+	requests []testCacheRequest
+}
+
+func (m *testCacheMetrics) RecordRequest(_ context.Context, operation, result string) {
+	m.requests = append(m.requests, testCacheRequest{
+		operation: operation,
+		result:    result,
+	})
 }
 
 func (*testCacheMetrics) RecordLoaderDuration(context.Context, string, time.Duration) {}
 
 func (*testCacheMetrics) RecordSingleflightShared(context.Context) {}
 
-type testLockMetrics struct {
-	operations int
+type testLockOperation struct {
+	lockType  string
+	operation string
+	outcome   string
 }
 
-func (m *testLockMetrics) RecordOperation(context.Context, string, string, string) {
-	m.operations++
+type testLockMetrics struct {
+	operations []testLockOperation
+}
+
+func (m *testLockMetrics) RecordOperation(_ context.Context, lockType, operation, outcome string) {
+	m.operations = append(m.operations, testLockOperation{
+		lockType:  lockType,
+		operation: operation,
+		outcome:   outcome,
+	})
+}
+
+type testRateLimiterDecision struct {
+	algorithm string
+	outcome   string
 }
 
 type testRateLimiterMetrics struct {
-	decisions int
+	decisions []testRateLimiterDecision
 }
 
-func (m *testRateLimiterMetrics) RecordDecision(context.Context, string, string, time.Duration) {
-	m.decisions++
+func (m *testRateLimiterMetrics) RecordDecision(_ context.Context, algorithm, outcome string, _ time.Duration) {
+	m.decisions = append(m.decisions, testRateLimiterDecision{
+		algorithm: algorithm,
+		outcome:   outcome,
+	})
 }
 
 var (
@@ -70,14 +95,7 @@ var _ = Describe("Client observability", func() {
 			},
 		}
 
-		client, err := xredis.NewClient(
-			&rdb.Options{
-				Addr: redisAddr,
-				DB:   testDB,
-			},
-			xredis.WithMetrics(metrics),
-		)
-		Expect(err).NotTo(HaveOccurred())
+		client := newTestClient(xredis.WithMetrics(metrics))
 		DeferCleanup(func() {
 			Expect(client.Close()).To(Succeed())
 		})
@@ -98,14 +116,7 @@ var _ = Describe("Client observability", func() {
 			},
 		}
 
-		client, err := xredis.NewClient(
-			&rdb.Options{
-				Addr: redisAddr,
-				DB:   testDB,
-			},
-			xredis.WithMetrics(metrics),
-		)
-		Expect(err).NotTo(HaveOccurred())
+		client := newTestClient(xredis.WithMetrics(metrics))
 		DeferCleanup(func() {
 			Expect(client.Close()).To(Succeed())
 		})
@@ -121,7 +132,9 @@ var _ = Describe("Client observability", func() {
 
 		_, _, err = cache.Get(ctx, "missing")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cacheMetrics.requests).To(Equal(1))
+		Expect(cacheMetrics.requests).To(Equal([]testCacheRequest{
+			{operation: "get", result: "miss"},
+		}))
 
 		lock, acquired, err := client.TryLock(
 			ctx,
@@ -131,7 +144,10 @@ var _ = Describe("Client observability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(acquired).To(BeTrue())
 		Expect(lock.Unlock(ctx)).To(Succeed())
-		Expect(lockMetrics.operations).To(Equal(2))
+		Expect(lockMetrics.operations).To(Equal([]testLockOperation{
+			{lockType: "lease", operation: "acquire", outcome: "success"},
+			{lockType: "lease", operation: "unlock", outcome: "success"},
+		}))
 
 		limiter, err := xredis.NewRateLimiter(
 			client,
@@ -149,7 +165,9 @@ var _ = Describe("Client observability", func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(decision.Allowed).To(BeTrue())
-		Expect(rateLimiterMetrics.decisions).To(Equal(1))
+		Expect(rateLimiterMetrics.decisions).To(Equal([]testRateLimiterDecision{
+			{algorithm: "fixed_window", outcome: "allowed"},
+		}))
 	})
 
 	It("supports partially configured metrics", func() {
@@ -159,14 +177,7 @@ var _ = Describe("Client observability", func() {
 			},
 		}
 
-		client, err := xredis.NewClient(
-			&rdb.Options{
-				Addr: redisAddr,
-				DB:   testDB,
-			},
-			xredis.WithMetrics(metrics),
-		)
-		Expect(err).NotTo(HaveOccurred())
+		client := newTestClient(xredis.WithMetrics(metrics))
 		DeferCleanup(func() {
 			Expect(client.Close()).To(Succeed())
 		})

@@ -21,6 +21,21 @@ var _ = Describe("Lock", func() {
 		Expect(client.Close()).To(Succeed())
 	})
 
+	It("uses the provided owner token and exposes lock identity", func() {
+		lock, acquired, err := client.TryLockWithToken(
+			ctx,
+			"lock:order:42",
+			"owner-42",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(lock.Key()).To(Equal("lock:order:42"))
+		Expect(lock.Token()).To(Equal("owner-42"))
+
+		Expect(lock.Unlock(ctx)).To(Succeed())
+	})
+
 	It("does not acquire a lock that is already held", func() {
 		firstLock, acquired, err := client.TryLock(
 			ctx,

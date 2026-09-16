@@ -12,8 +12,8 @@ type SetItem struct {
 	// Key is the Redis key.
 	Key string
 
-	// Value is passed directly to Redis by SetMany or encoded with the client
-	// Codec by SetStructMany.
+	// Value is passed directly to Redis by SetItems or encoded with the client
+	// Codec by SetStructItems.
 	Value any
 
 	// Expiration is the key expiration.

@@ -85,6 +85,16 @@ var _ = Describe("Commands", func() {
 			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
 		})
 
+		It("rejects negative TTLs for conditional writes", func() {
+			ok, err := client.SetNX(ctx, "key", "value", -time.Second)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(ok).To(BeFalse())
+
+			ok, err = client.SetXX(ctx, "key", "value", -time.Second)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(ok).To(BeFalse())
+		})
+
 		It("sets a value only when the key does not exist", func() {
 			ok, err := client.SetNX(ctx, "key", "first", time.Minute)
 			Expect(err).NotTo(HaveOccurred())
@@ -204,6 +214,13 @@ var _ = Describe("Commands", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeTrue())
 			Expect(actual).To(Equal(second))
+		})
+
+		It("rejects a negative GETEX TTL for encoded values", func() {
+			var profile testProfile
+			ok, err := client.GetStructEx(ctx, "profile", &profile, -time.Second)
+			Expect(err).To(MatchError(xredis.ErrInvalidTTL))
+			Expect(ok).To(BeFalse())
 		})
 
 		It("gets and deletes a struct atomically", func() {

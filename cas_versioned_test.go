@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/bsm/ginkgo/v2"
@@ -24,6 +25,23 @@ type versionedCASResult struct {
 	status   string
 	swapped  bool
 	err      error
+}
+
+type versionedStoreCodecSpy struct {
+	marshalCalls   atomic.Int64
+	unmarshalCalls atomic.Int64
+}
+
+func (c *versionedStoreCodecSpy) Marshal(value any) ([]byte, error) {
+	c.marshalCalls.Add(1)
+
+	return (xredis.JSONCodec{}).Marshal(value)
+}
+
+func (c *versionedStoreCodecSpy) Unmarshal(data []byte, dst any) error {
+	c.unmarshalCalls.Add(1)
+
+	return (xredis.JSONCodec{}).Unmarshal(data, dst)
 }
 
 var _ = Describe("VersionedStore", func() {
@@ -60,6 +78,34 @@ var _ = Describe("VersionedStore", func() {
 
 			Expect(versionedStore).To(BeNil())
 			Expect(err).To(MatchError(xredis.ErrInvalidVersionedStore))
+		})
+
+		It("creates a client-bound store with a custom codec", func() {
+			codec := new(versionedStoreCodecSpy)
+			boundStore, err := client.VersionedStore[versionedOrder](
+				xredis.WithVersionedStorePrefix("versioned:bound:"),
+				xredis.WithVersionedStoreCodec(codec),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := versionedOrder{
+				ID:      "42",
+				Status:  "processing",
+				Version: 1,
+			}
+
+			revision, created, err := boundStore.SetIfAbsent(ctx, key, expected, 0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created).To(BeTrue())
+			Expect(revision).NotTo(BeEmpty())
+
+			entry, ok, err := boundStore.Get(ctx, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(entry.Value).To(Equal(expected))
+			Expect(entry.Revision).To(Equal(revision))
+			Expect(codec.marshalCalls.Load()).To(Equal(int64(1)))
+			Expect(codec.unmarshalCalls.Load()).To(Equal(int64(1)))
 		})
 
 		It("rejects interface value types", func() {
@@ -225,7 +271,7 @@ var _ = Describe("VersionedStore", func() {
 		})
 	})
 
-	Describe("Create", func() {
+	Describe("SetIfAbsent", func() {
 		It("creates a value with expiration", func() {
 			expected := versionedOrder{
 				ID:      "42",
