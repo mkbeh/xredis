@@ -10,7 +10,7 @@ import (
 
 const orderPrefix = "xredis:cas:order:"
 
-var ErrCompareConditionFailed = errors.New("compare condition failed")
+var errCompareConditionFailed = errors.New("compare condition failed")
 
 type Order struct {
 	ID        string `json:"id"`
@@ -39,12 +39,8 @@ type orderRepository struct {
 	ttl    time.Duration
 }
 
-func newOrderRepository(
-	client *xredis.Client,
-	ttl time.Duration,
-) (*orderRepository, error) {
-	store, err := xredis.NewVersionedStore[Order](
-		client,
+func newOrderRepository(client *xredis.Client, ttl time.Duration) (*orderRepository, error) {
+	store, err := client.VersionedStore[Order](
 		xredis.WithVersionedStorePrefix(orderPrefix),
 	)
 	if err != nil {
@@ -58,23 +54,15 @@ func newOrderRepository(
 	}, nil
 }
 
-func (r *orderRepository) Seed(
-	ctx context.Context,
-	id string,
-) (xredis.VersionedValue[Order], bool, error) {
+func (r *orderRepository) Seed(ctx context.Context, id string) (xredis.VersionedValue[Order], bool, error) {
 	order := Order{
 		ID:        id,
-		Status:    "processing",
+		Status:    statusProcessing,
 		Version:   1,
 		UpdatedAt: nowString(),
 	}
 
-	revision, created, err := r.store.SetIfAbsent(
-		ctx,
-		id,
-		order,
-		r.ttl,
-	)
+	revision, created, err := r.store.SetIfAbsent(ctx, id, order, r.ttl)
 	if err != nil {
 		return xredis.VersionedValue[Order]{}, false, err
 	}
@@ -89,17 +77,11 @@ func (r *orderRepository) Seed(
 	}, true, nil
 }
 
-func (r *orderRepository) Get(
-	ctx context.Context,
-	id string,
-) (xredis.VersionedValue[Order], bool, error) {
+func (r *orderRepository) Get(ctx context.Context, id string) (xredis.VersionedValue[Order], bool, error) {
 	return r.store.Get(ctx, id)
 }
 
-func (r *orderRepository) Complete(
-	ctx context.Context,
-	id string,
-) (xredis.VersionedValue[Order], bool, error) {
+func (r *orderRepository) Complete(ctx context.Context, id string) (xredis.VersionedValue[Order], bool, error) {
 	entry, ok, err := r.Get(ctx, id)
 	if err != nil {
 		return xredis.VersionedValue[Order]{}, false, err
@@ -108,15 +90,9 @@ func (r *orderRepository) Complete(
 		return xredis.VersionedValue[Order]{}, false, xredis.ErrKeyNotFound
 	}
 
-	updated := nextOrder(entry.Value, "completed")
+	updated := nextOrder(entry.Value, statusCompleted)
 
-	revision, swapped, err := r.store.CompareAndSwap(
-		ctx,
-		id,
-		entry.Revision,
-		updated,
-		xredis.KeepTTL,
-	)
+	revision, swapped, err := r.store.CompareAndSwap(ctx, id, entry.Revision, updated, xredis.KeepTTL)
 	if err != nil {
 		return xredis.VersionedValue[Order]{}, false, err
 	}
@@ -131,10 +107,7 @@ func (r *orderRepository) Complete(
 	}, true, nil
 }
 
-func (r *orderRepository) DeleteIfCurrent(
-	ctx context.Context,
-	id string,
-) (xredis.VersionedValue[Order], bool, error) {
+func (r *orderRepository) DeleteIfCurrent(ctx context.Context, id string) (xredis.VersionedValue[Order], bool, error) {
 	entry, ok, err := r.Get(ctx, id)
 	if err != nil {
 		return xredis.VersionedValue[Order]{}, false, err
@@ -143,11 +116,7 @@ func (r *orderRepository) DeleteIfCurrent(
 		return xredis.VersionedValue[Order]{}, false, xredis.ErrKeyNotFound
 	}
 
-	deleted, err := r.store.CompareAndDelete(
-		ctx,
-		id,
-		entry.Revision,
-	)
+	deleted, err := r.store.CompareAndDelete(ctx, id, entry.Revision)
 	if err != nil {
 		return xredis.VersionedValue[Order]{}, false, err
 	}
@@ -155,10 +124,7 @@ func (r *orderRepository) DeleteIfCurrent(
 	return entry, deleted, nil
 }
 
-func (r *orderRepository) StaleSwap(
-	ctx context.Context,
-	id string,
-) (StaleSwapResult, error) {
+func (r *orderRepository) StaleSwap(ctx context.Context, id string) (StaleSwapResult, error) {
 	if err := r.client.Delete(ctx, orderKey(id)); err != nil {
 		return StaleSwapResult{}, err
 	}
@@ -168,34 +134,22 @@ func (r *orderRepository) StaleSwap(
 		return StaleSwapResult{}, err
 	}
 	if !created {
-		return StaleSwapResult{}, ErrCompareConditionFailed
+		return StaleSwapResult{}, errCompareConditionFailed
 	}
 
-	firstOrder := nextOrder(original.Value, "cancelled")
+	firstOrder := nextOrder(original.Value, statusCancelled)
 
-	firstRevision, firstSwapped, err := r.store.CompareAndSwap(
-		ctx,
-		id,
-		original.Revision,
-		firstOrder,
-		xredis.KeepTTL,
-	)
+	firstRevision, firstSwapped, err := r.store.CompareAndSwap(ctx, id, original.Revision, firstOrder, xredis.KeepTTL)
 	if err != nil {
 		return StaleSwapResult{}, err
 	}
 	if !firstSwapped {
-		return StaleSwapResult{}, ErrCompareConditionFailed
+		return StaleSwapResult{}, errCompareConditionFailed
 	}
 
-	staleOrder := nextOrder(original.Value, "completed")
+	staleOrder := nextOrder(original.Value, statusCompleted)
 
-	staleRevision, staleSwapped, err := r.store.CompareAndSwap(
-		ctx,
-		id,
-		original.Revision,
-		staleOrder,
-		xredis.KeepTTL,
-	)
+	staleRevision, staleSwapped, err := r.store.CompareAndSwap(ctx, id, original.Revision, staleOrder, xredis.KeepTTL)
 	if err != nil {
 		return StaleSwapResult{}, err
 	}

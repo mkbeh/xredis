@@ -21,6 +21,24 @@ var _ = Describe("FencedLock", func() {
 		Expect(client.Close()).To(Succeed())
 	})
 
+	It("uses the provided owner token and exposes fenced lock identity", func() {
+		lock, acquired, err := client.TryFencedLockWithToken(
+			ctx,
+			"lock:{order:42}",
+			"fencing:{order:42}",
+			"owner-42",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(lock.Key()).To(Equal("lock:{order:42}"))
+		Expect(lock.Token()).To(Equal("owner-42"))
+		Expect(lock.FencingKey()).To(Equal("fencing:{order:42}"))
+		Expect(lock.FencingToken()).To(BeNumerically(">", 0))
+
+		Expect(lock.Unlock(ctx)).To(Succeed())
+	})
+
 	It("returns monotonically increasing fencing tokens", func() {
 		firstLock, acquired, err := client.TryFencedLock(
 			ctx,
@@ -47,6 +65,64 @@ var _ = Describe("FencedLock", func() {
 		Expect(secondLock.FencingToken()).To(BeNumerically(">", firstToken))
 
 		Expect(secondLock.Unlock(ctx)).To(Succeed())
+	})
+
+	It("does not consume a fencing token when acquisition is contended", func() {
+		firstLock, acquired, err := client.TryFencedLock(
+			ctx,
+			"lock:{order:42}",
+			"fencing:{order:42}",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		firstToken := firstLock.FencingToken()
+
+		contendedLock, acquired, err := client.TryFencedLock(
+			ctx,
+			"lock:{order:42}",
+			"fencing:{order:42}",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeFalse())
+		Expect(contendedLock).To(BeNil())
+
+		Expect(firstLock.Unlock(ctx)).To(Succeed())
+
+		nextLock, acquired, err := client.TryFencedLock(
+			ctx,
+			"lock:{order:42}",
+			"fencing:{order:42}",
+			time.Minute,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+		Expect(nextLock.FencingToken()).To(Equal(firstToken + 1))
+
+		Expect(nextLock.Unlock(ctx)).To(Succeed())
+	})
+
+	It("extends a fenced lock owned by the caller", func() {
+		lock, acquired, err := client.TryFencedLock(
+			ctx,
+			"lock:{order:42}",
+			"fencing:{order:42}",
+			time.Second,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acquired).To(BeTrue())
+
+		extended, err := lock.Extend(ctx, 5*time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(extended).To(BeTrue())
+
+		ttl, err := client.Raw().PTTL(ctx, lock.Key()).Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ttl).To(BeNumerically(">", 4*time.Second))
+		Expect(ttl).To(BeNumerically("<=", 5*time.Second))
+
+		Expect(lock.Unlock(ctx)).To(Succeed())
 	})
 
 	It("rejects equal lock and fencing keys", func() {

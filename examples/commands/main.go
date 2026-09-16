@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -18,29 +19,11 @@ const (
 	defaultRedis = "localhost:6379"
 	defaultTTL   = 10 * time.Minute
 
-	keyPrefix    = "xredis:commands:"
-	sampleClient = "commands-example-client"
-
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
-)
-
-var (
-	client *xredis.Client
-
-	redisAddr string
-	httpAddr  string
+	keyPrefix = "xredis:commands:"
 )
 
 type messageRequest struct {
 	Value      string `json:"value"`
-	TTLSeconds int    `json:"ttl_seconds"`
-}
-
-type profileRequest struct {
-	Name       string `json:"name"`
-	Email      string `json:"email"`
-	Active     bool   `json:"active"`
 	TTLSeconds int    `json:"ttl_seconds"`
 }
 
@@ -51,8 +34,9 @@ type profile struct {
 	Active bool   `json:"active"`
 }
 
-type userRequest struct {
+type profileRequest struct {
 	Name       string `json:"name"`
+	Email      string `json:"email"`
 	Active     bool   `json:"active"`
 	TTLSeconds int    `json:"ttl_seconds"`
 }
@@ -63,9 +47,71 @@ type userHash struct {
 	Active bool   `json:"active" redis:"active"`
 }
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+type userRequest struct {
+	Name       string `json:"name"`
+	Active     bool   `json:"active"`
+	TTLSeconds int    `json:"ttl_seconds"`
+}
+
+var client *xredis.Client
+
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	var err error
+
+	// Create a Redis client.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close Redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", healthHandler)
+
+	mux.HandleFunc("PUT /messages/{id}", setMessageHandler)
+	mux.HandleFunc("GET /messages/{id}", getMessageHandler)
+
+	mux.HandleFunc("PUT /profiles/{id}", setProfileHandler)
+	mux.HandleFunc("GET /profiles/{id}", getProfileHandler)
+
+	mux.HandleFunc("PUT /users/{id}", setUserHandler)
+	mux.HandleFunc("GET /users/{id}", getUserHandler)
+
+	mux.HandleFunc("POST /counters/{id}/increment", incrementCounterHandler)
+
+	mux.HandleFunc("DELETE /sample/{id}", cleanupHandler)
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("commands example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	// Start the HTTP server.
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -270,78 +316,6 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func main() {
-	var err error
-
-	metrics, err := newMetricsRuntime()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	defer func() {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
-			5*time.Second,
-		)
-		defer cancel()
-
-		if shutdownErr := metrics.Shutdown(ctx); shutdownErr != nil {
-			log.Println("unable to shut down metrics:", shutdownErr)
-		}
-	}()
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close Redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-
-	mux.HandleFunc("PUT /messages/{id}", setMessageHandler)
-	mux.HandleFunc("GET /messages/{id}", getMessageHandler)
-
-	mux.HandleFunc("PUT /profiles/{id}", setProfileHandler)
-	mux.HandleFunc("GET /profiles/{id}", getProfileHandler)
-
-	mux.HandleFunc("PUT /users/{id}", setUserHandler)
-	mux.HandleFunc("GET /users/{id}", getUserHandler)
-
-	mux.HandleFunc("POST /counters/{id}/increment", incrementCounterHandler)
-
-	mux.HandleFunc("DELETE /sample/{id}", cleanupHandler)
-
-	mux.Handle("GET /metrics", metrics.Handler())
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("commands example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func messageKey(id string) string {
 	return keyPrefix + "message:" + id
 }
@@ -379,7 +353,7 @@ func decodeJSON(r *http.Request, dst any) error {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

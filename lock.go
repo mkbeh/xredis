@@ -70,7 +70,7 @@ func (c *Client) TryLockWithToken(ctx context.Context, key, token string, ttl ti
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		c.metrics.recordLockOperation(
+		c.metrics.lock.recordOperation(
 			ctx,
 			lockTypeLease,
 			lockOperationAcquire,
@@ -117,7 +117,7 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		l.client.metrics.recordLockOperation(
+		l.client.metrics.lock.recordOperation(
 			ctx,
 			lockTypeLease,
 			lockOperationUnlock,
@@ -156,7 +156,7 @@ func (l *Lock) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
 	metricOutcome := lockOutcomeError
 
 	defer func() {
-		l.client.metrics.recordLockOperation(
+		l.client.metrics.lock.recordOperation(
 			ctx,
 			lockTypeLease,
 			lockOperationExtend,
@@ -193,11 +193,7 @@ func (l *Lock) validate() error {
 		return ErrInvalidLock
 	}
 
-	return validateLock(
-		l.client,
-		l.key,
-		l.token,
-	)
+	return validateLock(l.client, l.key, l.token)
 }
 
 func validateLock(client *Client, key, token string) error {

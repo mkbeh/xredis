@@ -1,7 +1,6 @@
 services:
   redis-standalone:
     image: redis:alpine
-    container_name: sample-redis
     profiles:
       - standalone
       - otel
@@ -13,14 +12,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 5s
     volumes:
       - redis-standalone-data:/data
-    networks:
-      - sample-network
 
   redis-ring-1:
     image: redis:alpine
-    container_name: sample-redis-ring-1
     profiles:
       - ring
     command: [ "redis-server", "--appendonly", "yes" ]
@@ -31,14 +28,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 5s
     volumes:
       - redis-ring-1-data:/data
-    networks:
-      - sample-network
 
   redis-ring-2:
     image: redis:alpine
-    container_name: sample-redis-ring-2
     profiles:
       - ring
     command: [ "redis-server", "--appendonly", "yes" ]
@@ -49,14 +44,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 5s
     volumes:
       - redis-ring-2-data:/data
-    networks:
-      - sample-network
 
   redis-ring-3:
     image: redis:alpine
-    container_name: sample-redis-ring-3
     profiles:
       - ring
     command: [ "redis-server", "--appendonly", "yes" ]
@@ -67,14 +60,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 5s
     volumes:
       - redis-ring-3-data:/data
-    networks:
-      - sample-network
 
   redis-sentinel:
     image: redis:alpine
-    container_name: sample-redis-sentinel
     profiles:
       - sentinel
     entrypoint:
@@ -166,14 +157,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 10s
     volumes:
       - redis-sentinel-data:/data
-    networks:
-      - sample-network
 
   redis-cluster:
     image: redis:alpine
-    container_name: sample-redis-cluster
     profiles:
       - cluster
     entrypoint:
@@ -236,28 +225,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+      start_period: 10s
     volumes:
       - redis-cluster-data:/data
-    networks:
-      - sample-network
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: sample-jaeger
+    image: cr.jaegertracing.io/jaegertracing/jaeger:latest
     profiles:
       - otel
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
-    networks:
-      - sample-network
+      - "4318:4318"   # OTLP HTTP
 
   redisinsight:
     image: redis/redisinsight:latest
-    container_name: sample-redisinsight
     profiles:
       - standalone
       - ring
@@ -268,8 +249,6 @@ services:
       - "5540:5540"
     volumes:
       - redisinsight-data:/data
-    networks:
-      - sample-network
 
 volumes:
   redis-standalone-data:
@@ -279,7 +258,3 @@ volumes:
   redis-sentinel-data:
   redis-cluster-data:
   redisinsight-data:
-
-networks:
-  sample-network:
-    driver: bridge

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"time"
 
 	rdb "github.com/redis/go-redis/v9"
@@ -233,7 +234,7 @@ func (c *Cache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	metricResult := cacheResultError
 
 	defer func() {
-		c.client.metrics.recordCacheRequest(
+		c.client.metrics.cache.recordRequest(
 			ctx,
 			cacheOperationGet,
 			metricResult,
@@ -279,7 +280,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 	metricResult := cacheResultError
 
 	defer func() {
-		c.client.metrics.recordCacheRequest(
+		c.client.metrics.cache.recordRequest(
 			ctx,
 			cacheOperationGetOrLoad,
 			metricResult,
@@ -321,7 +322,7 @@ func (c *Cache[T]) GetOrLoad(ctx context.Context, key string, loader Loader[T]) 
 
 	case result := <-ch:
 		if result.Shared {
-			c.client.metrics.recordCacheSingleflightShared(ctx)
+			c.client.metrics.cache.recordSingleflightShared(ctx)
 		}
 
 		if result.Err != nil {
@@ -420,10 +421,10 @@ func (c *Cache[T]) runLoader(
 	loader Loader[T],
 ) (T, error) {
 	start := time.Now()
-	outcome := loaderOutcomeError
+	outcome := cacheLoaderOutcomeError
 
 	defer func() {
-		c.client.metrics.recordCacheLoaderDuration(
+		c.client.metrics.cache.recordLoaderDuration(
 			ctx,
 			outcome,
 			time.Since(start),
@@ -434,10 +435,10 @@ func (c *Cache[T]) runLoader(
 
 	switch {
 	case err == nil:
-		outcome = loaderOutcomeSuccess
+		outcome = cacheLoaderOutcomeSuccess
 
 	case c.isNotFound(err):
-		outcome = loaderOutcomeNotFound
+		outcome = cacheLoaderOutcomeNotFound
 	}
 
 	return value, err
@@ -496,4 +497,32 @@ func normalizeCacheNotFound(err error) error {
 
 func defaultCacheIsNotFound(err error) bool {
 	return errors.Is(err, ErrKeyNotFound) || errors.Is(err, rdb.Nil)
+}
+
+func isRawValueType[T any]() bool {
+	var value T
+
+	switch any(value).(type) {
+	case string, *string,
+		[]byte,
+		int, *int,
+		int8, *int8,
+		int16, *int16,
+		int32, *int32,
+		int64, *int64,
+		uint, *uint,
+		uint8, *uint8,
+		uint16, *uint16,
+		uint32, *uint32,
+		uint64, *uint64,
+		float32, *float32,
+		float64, *float64,
+		bool, *bool,
+		time.Time, *time.Time,
+		time.Duration, *time.Duration,
+		net.IP:
+		return true
+	default:
+		return false
+	}
 }

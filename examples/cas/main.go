@@ -10,32 +10,98 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
+	statusPrefix = "xredis:cas:status:"
 	defaultDB    = 0
 	defaultHTTP  = "localhost:8080"
 	defaultRedis = "localhost:6379"
 
-	valueTTL        = time.Hour
-	sampleClient    = "cas-example-client"
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
+	statusProcessing = "processing"
+	statusCompleted  = "completed"
+	statusCancelled  = "cancelled"
+
+	valueTTL = time.Hour
 )
 
 var (
-	client *xredis.Client
-	repo   *orderRepository
-
-	redisAddr string
-	httpAddr  string
-
+	client    *xredis.Client
+	repo      *orderRepository
 	sampleIDs = []string{"42", "7", "100"}
 )
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	var err error
+
+	// Create a Redis client.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create a versioned order repository.
+	repo, err = newOrderRepository(client, valueTTL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", healthHandler)
+
+	mux.HandleFunc("GET /statuses/{id}", getStatusHandler)
+	mux.HandleFunc("POST /statuses/{id}/seed", seedStatusHandler)
+	mux.HandleFunc("POST /statuses/{id}/complete", completeStatusHandler)
+	mux.HandleFunc(
+		"DELETE /statuses/{id}/processing",
+		deleteProcessingStatusHandler,
+	)
+	mux.HandleFunc("POST /statuses/{id}/stale", staleStatusHandler)
+
+	mux.HandleFunc("GET /orders/{id}", getOrderHandler)
+	mux.HandleFunc("POST /orders/{id}/seed", seedOrderHandler)
+	mux.HandleFunc("POST /orders/{id}/complete", completeOrderHandler)
+	mux.HandleFunc(
+		"DELETE /orders/{id}/current",
+		deleteCurrentOrderHandler,
+	)
+	mux.HandleFunc("POST /orders/{id}/stale", staleOrderHandler)
+
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("cas example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	// Start the HTTP server.
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -74,14 +140,14 @@ func seedStatusHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := statusKey(id)
 
-	if err := client.Set(r.Context(), key, "processing", valueTTL); err != nil {
+	if err := client.Set(r.Context(), key, statusProcessing, valueTTL); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"key":    key,
-		"status": "processing",
+		"status": statusProcessing,
 	})
 }
 
@@ -92,8 +158,8 @@ func completeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	swapped, err := client.CompareAndSwap(
 		r.Context(),
 		key,
-		"processing",
-		"completed",
+		statusProcessing,
+		statusCompleted,
 		xredis.KeepTTL,
 	)
 	if err != nil {
@@ -102,14 +168,14 @@ func completeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !swapped {
-		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		writeError(w, http.StatusConflict, errCompareConditionFailed)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"key":     key,
 		"swapped": true,
-		"status":  "completed",
+		"status":  statusCompleted,
 	})
 }
 
@@ -120,7 +186,7 @@ func deleteProcessingStatusHandler(w http.ResponseWriter, r *http.Request) {
 	deleted, err := client.CompareAndDelete(
 		r.Context(),
 		key,
-		"processing",
+		statusProcessing,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -128,7 +194,7 @@ func deleteProcessingStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !deleted {
-		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		writeError(w, http.StatusConflict, errCompareConditionFailed)
 		return
 	}
 
@@ -145,7 +211,7 @@ func staleStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if err := client.Set(
 		r.Context(),
 		key,
-		"processing",
+		statusProcessing,
 		valueTTL,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -155,8 +221,8 @@ func staleStatusHandler(w http.ResponseWriter, r *http.Request) {
 	firstSwapped, err := client.CompareAndSwap(
 		r.Context(),
 		key,
-		"processing",
-		"cancelled",
+		statusProcessing,
+		statusCancelled,
 		xredis.KeepTTL,
 	)
 	if err != nil {
@@ -167,8 +233,8 @@ func staleStatusHandler(w http.ResponseWriter, r *http.Request) {
 	staleSwapped, err := client.CompareAndSwap(
 		r.Context(),
 		key,
-		"processing",
-		"completed",
+		statusProcessing,
+		statusCompleted,
 		xredis.KeepTTL,
 	)
 	if err != nil {
@@ -221,7 +287,7 @@ func seedOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !created {
-		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		writeError(w, http.StatusConflict, errCompareConditionFailed)
 		return
 	}
 
@@ -243,7 +309,7 @@ func completeOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !swapped {
-		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		writeError(w, http.StatusConflict, errCompareConditionFailed)
 		return
 	}
 
@@ -265,7 +331,7 @@ func deleteCurrentOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !deleted {
-		writeError(w, http.StatusConflict, ErrCompareConditionFailed)
+		writeError(w, http.StatusConflict, errCompareConditionFailed)
 		return
 	}
 
@@ -299,7 +365,7 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if err := client.DeleteMany(r.Context(), keys); err != nil {
+	if err := client.DeleteKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -309,74 +375,12 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func main() {
-	var err error
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	repo, err = newOrderRepository(client, valueTTL)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("GET /statuses/{id}", getStatusHandler)
-	mux.HandleFunc("POST /statuses/{id}/seed", seedStatusHandler)
-	mux.HandleFunc("POST /statuses/{id}/complete", completeStatusHandler)
-	mux.HandleFunc(
-		"DELETE /statuses/{id}/processing",
-		deleteProcessingStatusHandler,
-	)
-	mux.HandleFunc("POST /statuses/{id}/stale", staleStatusHandler)
-	mux.HandleFunc("GET /orders/{id}", getOrderHandler)
-	mux.HandleFunc("POST /orders/{id}/seed", seedOrderHandler)
-	mux.HandleFunc("POST /orders/{id}/complete", completeOrderHandler)
-	mux.HandleFunc(
-		"DELETE /orders/{id}/current",
-		deleteCurrentOrderHandler,
-	)
-	mux.HandleFunc("POST /orders/{id}/stale", staleOrderHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("cas example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func statusKey(id string) string {
-	return "xredis:cas:status:" + id
+	return statusPrefix + id
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

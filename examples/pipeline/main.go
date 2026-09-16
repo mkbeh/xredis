@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -17,21 +18,9 @@ const (
 	defaultHTTP  = "localhost:8080"
 	defaultRedis = "localhost:6379"
 
-	samplePrefix = "xredis:pipeline:"
-	sampleTTL    = 10 * time.Minute
-
-	sampleClient    = "pipeline-example-client"
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
-)
-
-var (
-	client *xredis.Client
-
-	redisAddr string
-	httpAddr  string
-
-	sampleIDs = []string{"42", "7", "100"}
+	samplePrefix    = "xredis:pipeline:"
+	sampleTTL       = 10 * time.Minute
+	sampleBatchSize = 5
 )
 
 type userProfile struct {
@@ -52,19 +41,64 @@ type sampleValue struct {
 	Index int    `json:"index"`
 }
 
-type seedResponse struct {
+type keysResponse struct {
 	Status string   `json:"status"`
 	Keys   []string `json:"keys"`
 }
 
-type removeResponse struct {
-	Status string   `json:"status"`
-	Keys   []string `json:"keys"`
-}
+var (
+	client    *xredis.Client
+	sampleIDs = []string{"42", "7", "100"}
+)
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	var err error
+
+	// Create a Redis client.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close Redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("POST /sample/{id}", seedHandler)
+	mux.HandleFunc("DELETE /pipeline/delete/{id}", deleteHandler)
+	mux.HandleFunc("DELETE /pipeline/unlink/{id}", unlinkHandler)
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("pipeline example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	// Start the HTTP server.
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +121,7 @@ func seedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, seedResponse{
+	writeJSON(w, http.StatusOK, keysResponse{
 		Status: "seeded",
 		Keys:   keys,
 	})
@@ -97,12 +131,12 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	keys := deleteKeys(id)
 
-	if err := client.DeleteMany(r.Context(), keys); err != nil {
+	if err := client.DeleteKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, removeResponse{
+	writeJSON(w, http.StatusOK, keysResponse{
 		Status: "deleted",
 		Keys:   keys,
 	})
@@ -112,12 +146,12 @@ func unlinkHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	keys := unlinkKeys(id)
 
-	if err := client.UnlinkMany(r.Context(), keys); err != nil {
+	if err := client.UnlinkKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, removeResponse{
+	writeJSON(w, http.StatusOK, keysResponse{
 		Status: "unlinked",
 		Keys:   keys,
 	})
@@ -126,69 +160,25 @@ func unlinkHandler(w http.ResponseWriter, r *http.Request) {
 func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	keys := cleanupKeys()
 
-	if err := client.DeleteMany(r.Context(), keys); err != nil {
+	if err := client.DeleteKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, removeResponse{
+	writeJSON(w, http.StatusOK, keysResponse{
 		Status: "reset",
 		Keys:   keys,
 	})
 }
 
-func main() {
-	var err error
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close Redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("POST /sample/{id}", seedHandler)
-	mux.HandleFunc("DELETE /pipeline/delete/{id}", deleteHandler)
-	mux.HandleFunc("DELETE /pipeline/unlink/{id}", unlinkHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("pipeline example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func seedSample(ctx context.Context, id string) ([]string, error) {
 	rawItems := sampleRawSetItems(id)
-	if err := client.SetMany(ctx, rawItems); err != nil {
+	if err := client.SetItems(ctx, rawItems); err != nil {
 		return nil, err
 	}
 
 	structItems := sampleStructSetItems(id)
-	if err := client.SetStructMany(ctx, structItems); err != nil {
+	if err := client.SetStructItems(ctx, structItems); err != nil {
 		return nil, err
 	}
 
@@ -236,7 +226,7 @@ func sampleStructSetItems(id string) []xredis.SetItem {
 		},
 	}
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= sampleBatchSize; i++ {
 		items = append(items, xredis.SetItem{
 			Key: deleteKey(id, i),
 			Value: sampleValue{
@@ -248,7 +238,7 @@ func sampleStructSetItems(id string) []xredis.SetItem {
 		})
 	}
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= sampleBatchSize; i++ {
 		items = append(items, xredis.SetItem{
 			Key: unlinkKey(id, i),
 			Value: sampleValue{
@@ -274,7 +264,7 @@ func setItemKeys(items []xredis.SetItem) []string {
 }
 
 func cleanupKeys() []string {
-	keys := make([]string, 0, len(sampleIDs)*14)
+	keys := make([]string, 0, len(sampleIDs)*(4+2*sampleBatchSize))
 
 	for _, id := range sampleIDs {
 		keys = append(keys, sampleKeys(id)...)
@@ -298,9 +288,9 @@ func sampleKeys(id string) []string {
 }
 
 func deleteKeys(id string) []string {
-	keys := make([]string, 0, 5)
+	keys := make([]string, 0, sampleBatchSize)
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= sampleBatchSize; i++ {
 		keys = append(keys, deleteKey(id, i))
 	}
 
@@ -308,9 +298,9 @@ func deleteKeys(id string) []string {
 }
 
 func unlinkKeys(id string) []string {
-	keys := make([]string, 0, 5)
+	keys := make([]string, 0, sampleBatchSize)
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= sampleBatchSize; i++ {
 		keys = append(keys, unlinkKey(id, i))
 	}
 
@@ -342,7 +332,7 @@ func unlinkKey(id string, n int) string {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

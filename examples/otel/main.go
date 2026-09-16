@@ -13,14 +13,18 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	"github.com/mkbeh/xredis/extra/otelxredis"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	redisotelnative "github.com/redis/go-redis/extra/redisotel-native/v9"
+	"github.com/redis/go-redis/extra/redisotel/v9"
+	rdb "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9/maintnotifications"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -35,33 +39,184 @@ const (
 
 	keyPrefix    = "xredis:otel:"
 	sampleClient = "otel-example-client"
-
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
 )
 
 var (
-	client *xredis.Client
-	tracer trace.Tracer
-
-	redisAddr      string
-	httpAddr       string
-	serviceName    string
-	tracesEndpoint string
+	client     *xredis.Client
+	valueCache *xredis.Cache[string]
+	tracer     trace.Tracer
 )
 
 type valueRequest struct {
 	Value string `json:"value"`
 }
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
-	serviceName = env("OTEL_SERVICE_NAME", defaultServiceName)
-	tracesEndpoint = env(
-		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-		defaultTracesEndpoint,
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+	serviceName := env("OTEL_SERVICE_NAME", defaultServiceName)
+	tracesEndpoint := env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", defaultTracesEndpoint)
+
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
 	)
+	defer stop()
+
+	// Create the shared OpenTelemetry resource.
+	res, err := newResource(serviceName)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create the OpenTelemetry meter provider.
+	registry := prometheus.NewRegistry()
+
+	meterProvider, err := newMeterProvider(registry, res)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer shutdownMeterProvider(meterProvider)
+
+	// Enable native go-redis metrics.
+	redisMetrics := redisotelnative.NewConfig().
+		WithEnabled(true).
+		WithMeterProvider(meterProvider)
+
+	redisObs := redisotelnative.GetObservabilityInstance()
+	if err = redisObs.Init(redisMetrics); err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if shutdownErr := redisObs.Shutdown(); shutdownErr != nil {
+			log.Printf("shutdown native Redis metrics: %v", shutdownErr)
+		}
+	}()
+
+	// Create xredis wrapper-level metrics.
+	metrics, err := otelxredis.NewMetrics(
+		otelxredis.WithMeterProvider(meterProvider),
+		otelxredis.WithClientID(sampleClient),
+		otelxredis.WithLabel("xredis.example", "otel"),
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create the OpenTelemetry tracer provider and propagation.
+	tracerProvider, err := newTracerProvider(ctx, res, tracesEndpoint)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer shutdownTracerProvider(tracerProvider)
+
+	propagator := propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
+
+	tracer = tracerProvider.Tracer("github.com/mkbeh/xredis/examples/otel")
+
+	// Create a Redis client with xredis metrics.
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr:       redisAddr,
+			DB:         defaultDB,
+			ClientName: sampleClient,
+			// Keep the example focused on Redis commands rather than maintenance notifications.
+			MaintNotificationsConfig: &maintnotifications.Config{
+				Mode: maintnotifications.ModeDisabled,
+			},
+		},
+		xredis.WithMetrics(metrics),
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Instrument native Redis command tracing.
+	if err = redisotel.InstrumentTracing(
+		client.Raw(),
+		redisotel.WithTracerProvider(tracerProvider),
+		redisotel.WithDBStatement(true),
+		redisotel.WithCallerEnabled(true),
+		redisotel.WithAttributes(
+			attribute.String("xredis.client.id", sampleClient),
+			attribute.String("xredis.example", "otel"),
+		),
+	); err != nil {
+		_ = client.Close()
+		log.Fatalln(err)
+	}
+	defer shutdownClient(client)
+
+	// Create a typed cache.
+	valueCache, err = client.Cache[string](
+		xredis.WithCachePrefix(keyPrefix),
+		xredis.WithCacheTTL(defaultTTL),
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	if err = client.Ping(ctx); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Disable HTTP metrics to keep the Prometheus output focused on Redis and xredis.
+	httpMeterProvider := metricnoop.NewMeterProvider()
+
+	traceHandler := func(name string, handler http.HandlerFunc) http.Handler {
+		return otelhttp.NewHandler(
+			handler,
+			name,
+			otelhttp.WithTracerProvider(tracerProvider),
+			otelhttp.WithMeterProvider(httpMeterProvider),
+			otelhttp.WithPropagators(propagator),
+		)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+	mux.Handle("GET /healthz", traceHandler("GET /healthz", healthHandler))
+	mux.Handle("PUT /values/{key}", traceHandler("PUT /values/{key}", setValueHandler))
+	mux.Handle("GET /values/{key}", traceHandler("GET /values/{key}", getValueHandler))
+	mux.Handle("DELETE /values/{key}", traceHandler("DELETE /values/{key}", deleteValueHandler))
+	mux.Handle("POST /errors/{key}", traceHandler("POST /errors/{key}", redisErrorHandler))
+	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("OpenTelemetry example listening on http://%s", httpAddr)
+		log.Printf("Prometheus metrics available at http://%s/metrics", httpAddr)
+		log.Printf("Redis address: %s", redisAddr)
+		log.Printf("Jaeger UI: http://localhost:16686")
+
+		errCh <- server.ListenAndServe()
+	}()
+
+	// Wait for the HTTP server or shutdown signal.
+	select {
+	case err = <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Println("HTTP server error:", err)
+		}
+
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Println("unable to shutdown HTTP server:", shutdownErr)
+		}
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -80,8 +235,8 @@ func setValueHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, span := tracer.Start(r.Context(), "store Redis value")
 	defer span.End()
 
-	key := valueKey(r.PathValue("key"))
-	span.SetAttributes(attribute.String("xredis.example.key", key))
+	key := r.PathValue("key")
+	span.SetAttributes(attribute.String("xredis.example.key", valueKey(key)))
 
 	var req valueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -92,7 +247,7 @@ func setValueHandler(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int("xredis.example.value_length", len(req.Value)))
 
-	if err := client.Set(ctx, key, req.Value, defaultTTL); err != nil {
+	if err := valueCache.Set(ctx, key, req.Value); err != nil {
 		recordSpanError(span, err)
 		writeError(ctx, w, http.StatusInternalServerError, err)
 		return
@@ -101,7 +256,7 @@ func setValueHandler(w http.ResponseWriter, r *http.Request) {
 	span.SetStatus(codes.Ok, "value stored")
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":      key,
+		"key":      valueKey(key),
 		"trace_id": traceID(ctx),
 		"value":    req.Value,
 	})
@@ -111,10 +266,10 @@ func getValueHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, span := tracer.Start(r.Context(), "load Redis value")
 	defer span.End()
 
-	key := valueKey(r.PathValue("key"))
-	span.SetAttributes(attribute.String("xredis.example.key", key))
+	key := r.PathValue("key")
+	span.SetAttributes(attribute.String("xredis.example.key", valueKey(key)))
 
-	value, ok, err := client.String(ctx, key)
+	value, ok, err := valueCache.Get(ctx, key)
 	if err != nil {
 		recordSpanError(span, err)
 		writeError(ctx, w, http.StatusInternalServerError, err)
@@ -130,7 +285,7 @@ func getValueHandler(w http.ResponseWriter, r *http.Request) {
 	span.SetStatus(codes.Ok, "value loaded")
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":      key,
+		"key":      valueKey(key),
 		"trace_id": traceID(ctx),
 		"value":    value,
 	})
@@ -140,10 +295,10 @@ func deleteValueHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, span := tracer.Start(r.Context(), "delete Redis value")
 	defer span.End()
 
-	key := valueKey(r.PathValue("key"))
-	span.SetAttributes(attribute.String("xredis.example.key", key))
+	key := r.PathValue("key")
+	span.SetAttributes(attribute.String("xredis.example.key", valueKey(key)))
 
-	if err := client.Delete(ctx, key); err != nil {
+	if err := valueCache.Delete(ctx, key); err != nil {
 		recordSpanError(span, err)
 		writeError(ctx, w, http.StatusInternalServerError, err)
 		return
@@ -153,7 +308,7 @@ func deleteValueHandler(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted":  true,
-		"key":      key,
+		"key":      valueKey(key),
 		"trace_id": traceID(ctx),
 	})
 }
@@ -180,135 +335,10 @@ func redisErrorHandler(w http.ResponseWriter, r *http.Request) {
 	writeError(ctx, w, http.StatusInternalServerError, err)
 }
 
-func main() {
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
-	tracerProvider, err := newTracerProvider(ctx)
-	if err != nil {
-		log.Fatalln(err)
+func shutdownClient(client *xredis.Client) {
+	if err := client.Close(); err != nil {
+		log.Printf("close Redis client: %v", err)
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-
-		if shutdownErr := tracerProvider.Shutdown(shutdownCtx); shutdownErr != nil {
-			log.Println("unable to shutdown tracer provider:", shutdownErr)
-		}
-	}()
-
-	propagator := propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
-
-	otel.SetTracerProvider(tracerProvider)
-	otel.SetTextMapPropagator(propagator)
-	tracer = tracerProvider.Tracer("github.com/mkbeh/xredis/examples/otel")
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-		xredis.WithTracerProvider(tracerProvider),
-		xredis.WithTracingDBStatement(true),
-		xredis.WithTracingCallerEnabled(true),
-		xredis.WithTracingAttributes(
-			attribute.String("xredis.example", "otel"),
-		),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close Redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(ctx); err != nil {
-		log.Fatalln(err)
-	}
-
-	traceHandler := func(name string, handler http.HandlerFunc) http.Handler {
-		return otelhttp.NewHandler(
-			handler,
-			name,
-			otelhttp.WithTracerProvider(tracerProvider),
-			otelhttp.WithPropagators(propagator),
-		)
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /healthz", traceHandler("GET /healthz", healthHandler))
-	mux.Handle("PUT /values/{key}", traceHandler("PUT /values/{key}", setValueHandler))
-	mux.Handle("GET /values/{key}", traceHandler("GET /values/{key}", getValueHandler))
-	mux.Handle("DELETE /values/{key}", traceHandler("DELETE /values/{key}", deleteValueHandler))
-	mux.Handle("POST /errors/{key}", traceHandler("POST /errors/{key}", redisErrorHandler))
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		log.Printf("OpenTelemetry example listening on http://%s", httpAddr)
-		log.Printf("Redis address: %s", redisAddr)
-		log.Printf("Jaeger UI: http://localhost:16686")
-
-		errCh <- server.ListenAndServe()
-	}()
-
-	select {
-	case err = <-errCh:
-		if !errors.Is(err, http.ErrServerClosed) {
-			log.Println("HTTP server error:", err)
-		}
-
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-
-		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
-			log.Println("unable to shutdown HTTP server:", shutdownErr)
-		}
-	}
-}
-
-func newTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	exporter, err := otlptracehttp.New(
-		ctx,
-		otlptracehttp.WithEndpointURL(tracesEndpoint),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := resource.New(
-		ctx,
-		resource.WithFromEnv(),
-		resource.WithTelemetrySDK(),
-		resource.WithAttributes(
-			attribute.String("service.name", serviceName),
-		),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	), nil
 }
 
 func recordSpanError(span trace.Span, err error) {
@@ -330,7 +360,7 @@ func valueKey(key string) string {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

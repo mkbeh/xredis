@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mkbeh/xredis"
+	rdb "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -25,20 +26,13 @@ const (
 	slidingWindowLimit int64 = 5
 	tokenBucketLimit   int64 = 5
 	tokenBucketBurst   int64 = 10
-
-	sampleClient    = "rate-limiter-example-client"
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
 )
 
 var (
 	client  *xredis.Client
 	limiter *xredis.RateLimiter
 
-	redisAddr string
-	httpAddr  string
-
-	sampleIDs = []string{"42", "7", "100"}
+	sampleIDs = []string{"42", "7"}
 )
 
 type rateLimitResponse struct {
@@ -53,9 +47,61 @@ type rateLimitResponse struct {
 	ResetAfterSeconds int64  `json:"reset_after_seconds"`
 }
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	// Create a Redis client.
+	var err error
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create a rate limiter.
+	limiter, err = client.RateLimiter(
+		xredis.WithRateLimiterPrefix(rateLimitPrefix),
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("POST /allow/{id}", defaultAllowHandler)
+	mux.HandleFunc("POST /fixed-window/{id}", fixedWindowHandler)
+	mux.HandleFunc("POST /sliding-window/{id}", slidingWindowHandler)
+	mux.HandleFunc("POST /token-bucket/{id}", tokenBucketHandler)
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	// Start the HTTP server.
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("rate limiter example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -69,11 +115,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func fixedWindowHandler(w http.ResponseWriter, r *http.Request) {
+func defaultAllowHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := fixedWindowKey(id)
 
-	decision, err := limiter.AllowFixedWindow(r.Context(), key, xredis.RateLimit{
+	decision, err := limiter.Allow(r.Context(), key, xredis.RateLimit{
 		Limit:  fixedWindowLimit,
 		Window: rateLimitWindow,
 	})
@@ -85,11 +131,11 @@ func fixedWindowHandler(w http.ResponseWriter, r *http.Request) {
 	writeDecision(w, "fixed_window", key, decision)
 }
 
-func defaultAllowHandler(w http.ResponseWriter, r *http.Request) {
+func fixedWindowHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	key := fixedWindowKey(id)
 
-	decision, err := limiter.Allow(r.Context(), key, xredis.RateLimit{
+	decision, err := limiter.AllowFixedWindow(r.Context(), key, xredis.RateLimit{
 		Limit:  fixedWindowLimit,
 		Window: rateLimitWindow,
 	})
@@ -145,7 +191,7 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if err := client.DeleteMany(r.Context(), keys); err != nil {
+	if err := client.DeleteKeys(r.Context(), keys); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -153,76 +199,6 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "reset",
 	})
-}
-
-func main() {
-	var err error
-
-	metrics, err := newMetricsRuntime()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	defer func() {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
-			5*time.Second,
-		)
-		defer cancel()
-
-		if shutdownErr := metrics.Shutdown(ctx); shutdownErr != nil {
-			log.Println("unable to shut down metrics:", shutdownErr)
-		}
-	}()
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	limiter, err = client.RateLimiter(
-		xredis.WithRateLimiterPrefix(rateLimitPrefix),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("POST /allow/{id}", defaultAllowHandler)
-	mux.HandleFunc("POST /fixed-window/{id}", fixedWindowHandler)
-	mux.HandleFunc("POST /sliding-window/{id}", slidingWindowHandler)
-	mux.HandleFunc("POST /token-bucket/{id}", tokenBucketHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-	mux.Handle("GET /metrics", metrics.Handler())
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("rate limiter example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
 }
 
 func fixedWindowKey(id string) string {
@@ -269,7 +245,7 @@ func writeRateLimitHeaders(w http.ResponseWriter, decision xredis.RateLimitDecis
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {

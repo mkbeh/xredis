@@ -1,16 +1,15 @@
-# OpenTelemetry Tracing Example
+## Example: OpenTelemetry
 
-This example shows how to export `xredis` traces and spans to an OTLP-compatible tracing backend.
+This example demonstrates how to instrument `xredis` with OpenTelemetry metrics and distributed tracing.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Configuring an OpenTelemetry `TracerProvider`
-* Exporting traces through OTLP HTTP
-* Instrumenting HTTP handlers with `otelhttp`
-* Passing the tracer provider to `xredis`
-* Creating application spans around Redis operations
-* Viewing Redis command spans as children of HTTP and application spans
-* Recording a failed Redis command as an error span
+* **Shared Resource** — Use a common OpenTelemetry `Resource` for metrics and traces.
+* **Native Redis Metrics** — Collect `go-redis` client metrics with `redisotel-native` and expose them through Prometheus.
+* **xredis Metrics** — Collect wrapper-level cache metrics through `otelxredis` and `WithMetrics`.
+* **Distributed Tracing** — Export traces through OTLP HTTP and instrument Redis commands with `redisotel`.
+* **HTTP Instrumentation** — Instrument HTTP handlers with `otelhttp` while keeping HTTP metrics disabled.
+* **Error Visibility** — Record failed Redis commands and application spans as errors.
 
 ## Configuration
 
@@ -40,10 +39,10 @@ docker compose -f ../docker-compose.yml --profile otel up -d
 Services are available at:
 
 ```text
-Redis:       localhost:6379
+Redis:        localhost:6379
 RedisInsight: http://localhost:5540
-Jaeger UI:   http://localhost:16686
-OTLP HTTP:   http://localhost:4318/v1/traces
+Jaeger UI:    http://localhost:16686
+OTLP HTTP:    http://localhost:4318/v1/traces
 ```
 
 ## Run
@@ -60,10 +59,16 @@ Or from the repository root:
 go run ./examples/otel
 ```
 
-The HTTP server starts on:
+The HTTP server listens on:
 
 ```text
-localhost:8080
+http://localhost:8080
+```
+
+Prometheus metrics are exposed at:
+
+```text
+http://localhost:8080/metrics
 ```
 
 ## Store a value
@@ -108,6 +113,9 @@ GET /values/{key}
     └── Redis GET command span
 ```
 
+The request also records the `xredis` cache lookup metric. Repeating the request after storing a value produces a cache
+hit, while reading a missing key produces a cache miss.
+
 ## Delete a value
 
 ```shell
@@ -132,7 +140,34 @@ HTTP 500
 
 In Jaeger, both the application span and the failed Redis command span should be marked as errors.
 
-## View traces
+## Metrics
+
+Open the Prometheus endpoint:
+
+```shell
+curl http://localhost:8080/metrics
+```
+
+The endpoint exposes both native `go-redis` metrics and `xredis` wrapper-level metrics through the same OpenTelemetry
+`MeterProvider`.
+
+Native `go-redis` metrics use the defaults provided by `redisotel-native`. For example, Redis command operations are recorded through `db.client.operation.duration`.
+
+The example also exercises the typed cache so wrapper-level metrics are visible. Depending on the requests sent to the
+example, these include:
+
+| Metric | Type | Description |
+|---|---|---|
+| `xredis_cache_requests_total` | Counter | Cache lookups by operation and result. |
+| `xredis_cache_loader_duration_seconds` | Histogram | Cache loader execution duration. |
+| `xredis_cache_singleflight_shared_total` | Counter | Requests that received a shared singleflight result. |
+
+Only cache request metrics are exercised by the default value endpoints; loader and singleflight metrics appear when
+the corresponding `Cache[T]` workflows are used.
+
+The client ID is exposed as `xredis.client.id`. The `xredis.example` attribute is configured independently for wrapper-level metrics and tracing through `otelxredis.WithLabel` and `redisotel.WithAttributes`. Native `go-redis` metrics are configured separately through `redisotel-native`.
+
+## Traces
 
 Open Jaeger:
 
@@ -148,8 +183,8 @@ xredis-otel-example
 
 The API responses include `trace_id`, which can be used to locate a specific trace.
 
-The example enables Redis command statements with `WithTracingDBStatement(true)` so the generated spans are easier to
-inspect. Avoid recording command statements when Redis values may contain sensitive data.
+The example enables Redis command statements with `redisotel.WithDBStatement(true)` so generated Redis command spans are easier
+to inspect. Avoid recording command statements when Redis values may contain sensitive data.
 
 ## Stop services
 

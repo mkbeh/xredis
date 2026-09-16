@@ -31,6 +31,56 @@ var _ = Describe("Rate limiter", func() {
 		Expect(client.Close()).To(Succeed())
 	})
 
+	Describe("construction and validation", func() {
+		It("rejects a nil client", func() {
+			rateLimiter, err := xredis.NewRateLimiter(nil)
+			Expect(err).To(MatchError(xredis.ErrInvalidRateLimiter))
+			Expect(rateLimiter).To(BeNil())
+		})
+
+		It("rejects an empty key", func() {
+			decision, err := limiter.AllowFixedWindow(
+				ctx,
+				"",
+				xredis.RateLimit{Limit: 1, Window: time.Minute},
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidRateLimit))
+			Expect(decision).To(Equal(xredis.RateLimitDecision{}))
+		})
+
+		It("rejects invalid fixed-window limits", func() {
+			decision, err := limiter.AllowFixedWindow(
+				ctx,
+				"fixed:invalid-limit",
+				xredis.RateLimit{Limit: -1, Window: time.Minute},
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidRateLimit))
+			Expect(decision).To(Equal(xredis.RateLimitDecision{}))
+
+			decision, err = limiter.AllowFixedWindow(
+				ctx,
+				"fixed:invalid-window",
+				xredis.RateLimit{Limit: 1, Window: -time.Second},
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidRateLimit))
+			Expect(decision).To(Equal(xredis.RateLimitDecision{}))
+		})
+
+		It("rejects a negative token bucket burst", func() {
+			decision, err := limiter.AllowTokenBucket(
+				ctx,
+				"bucket:invalid-burst",
+				xredis.TokenBucketRateLimit{
+					Limit:  1,
+					Window: time.Minute,
+					Burst:  -1,
+				},
+			)
+			Expect(err).To(MatchError(xredis.ErrInvalidRateLimit))
+			Expect(decision).To(Equal(xredis.RateLimitDecision{}))
+		})
+	})
+
 	Describe("fixed window", func() {
 		It("allows requests up to the limit and rejects the next request", func() {
 			limit := xredis.RateLimit{
@@ -156,6 +206,21 @@ var _ = Describe("Rate limiter", func() {
 	})
 
 	Describe("token bucket", func() {
+		It("uses the refill limit as capacity when burst is zero", func() {
+			decision, err := limiter.AllowTokenBucket(
+				ctx,
+				"bucket:default-capacity:42",
+				xredis.TokenBucketRateLimit{
+					Limit:  3,
+					Window: time.Minute,
+				},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(decision.Allowed).To(BeTrue())
+			Expect(decision.Limit).To(Equal(int64(3)))
+			Expect(decision.Remaining).To(Equal(int64(2)))
+		})
+
 		It("allows a burst up to capacity and rejects the next request", func() {
 			limit := xredis.TokenBucketRateLimit{
 				Limit:  2,

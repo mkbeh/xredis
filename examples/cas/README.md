@@ -1,17 +1,15 @@
-# Redis CAS/CAD REST API
+## Example: Redis CAS/CAD REST API
 
-This example demonstrates atomic compare operations for raw Redis values and
-revision-based optimistic concurrency for structured values.
+This example demonstrates atomic compare operations for raw Redis values and revision-based optimistic concurrency
+with `xredis.VersionedStore[T]`.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Raw value CAS with `CompareAndSwap`
-* Raw value CAD with `CompareAndDelete`
-* TTL preservation with `KeepTTL`
-* Structured value creation with `VersionedStore[T]`
-* Revision-based CAS with `VersionedStore.CompareAndSwap`
-* Revision-based CAD with `VersionedStore.CompareAndDelete`
-* Stale value and stale revision rejection
+* **Raw CAS/CAD** — Update or delete Redis string values only when the current value matches the expected value.
+* **TTL Preservation** — Preserve existing expiration during compare-and-swap operations with `KeepTTL`.
+* **Versioned Values** — Store structured values with opaque revisions using `VersionedStore[T]`.
+* **Optimistic Concurrency** — Apply compare-and-swap and compare-and-delete operations using the current revision.
+* **Stale Write Protection** — Reject updates that use stale values or stale revisions.
 
 ## Configuration
 
@@ -174,8 +172,7 @@ Expected result:
 Orders are stored through:
 
 ```go
-store, err := xredis.NewVersionedStore[Order](
-    client,
+store, err := client.VersionedStore[Order](
     xredis.WithVersionedStorePrefix("xredis:cas:order:"),
 )
 ```

@@ -12,8 +12,8 @@ var (
 	// ErrInvalidTTL is returned when a TTL or duration option is invalid.
 	ErrInvalidTTL = errors.New("invalid ttl")
 
-	// ErrInvalidConfig is returned when Redis client configuration is invalid.
-	ErrInvalidConfig = errors.New("invalid redis config")
+	// ErrInvalidOptions is returned when Redis client options are invalid.
+	ErrInvalidOptions = errors.New("invalid redis options")
 
 	// ErrInvalidCache is returned when a typed cache is invalid or misconfigured.
 	ErrInvalidCache = errors.New("invalid cache")

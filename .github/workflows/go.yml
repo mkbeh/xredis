@@ -41,16 +41,19 @@ jobs:
           modules="$(
             {
               printf '.\n'
-
-              find ./examples \
+              find ./extra ./examples \
                 -name go.mod \
                 -type f \
                 -not -path '*/vendor/*' \
-                -print |
-                while IFS= read -r mod; do
-                  dirname "${mod#./}"
-                done
+                -print 2>/dev/null || true
             } |
+              while IFS= read -r mod; do
+                if [[ "${mod}" == "." ]]; then
+                  printf '.\n'
+                else
+                  dirname "${mod#./}"
+                fi
+              done |
               sort -u |
               jq -R -s -c 'split("\n")[:-1]'
           )"
@@ -73,6 +76,7 @@ jobs:
           check-latest: true
           cache-dependency-path: |
             go.sum
+            extra/**/go.sum
             examples/**/go.sum
 
       - name: Set up Task
@@ -104,10 +108,11 @@ jobs:
           check-latest: true
           cache-dependency-path: |
             go.sum
+            extra/**/go.sum
             examples/**/go.sum
 
       - name: Create temporary Go workspace
-        run: bash .github/scripts/create-go-workspace.sh
+        run: bash .github/scripts/create-go-workspace.sh --with-examples
 
       - name: Verify workspace resolution
         env:
@@ -169,6 +174,45 @@ jobs:
           check-latest: true
           cache-dependency-path: |
             go.sum
+            extra/**/go.sum
+            examples/**/go.sum
+
+      - name: Set up Task
+        uses: go-task/setup-task@v2
+
+      - name: Run tests
+        run: task test
+
+  race:
+    name: Race (Redis 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REDIS_ADDR: 127.0.0.1:6379
+
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: |
+            go.sum
+            extra/**/go.sum
             examples/**/go.sum
 
       - name: Set up Task
@@ -178,9 +222,9 @@ jobs:
         run: task test-race
 
   coverage:
-    name: Coverage
+    name: Coverage (Redis 8)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       REDIS_ADDR: 127.0.0.1:6379
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -205,7 +249,9 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            extra/**/go.sum
 
       - name: Set up Task
         uses: go-task/setup-task@v2

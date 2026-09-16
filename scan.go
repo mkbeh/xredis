@@ -166,7 +166,7 @@ func (c *Client) ScanEachBatch(ctx context.Context, opts ScanOptions, fn ScanBat
 // single-key DEL commands to avoid multi-key hash-slot constraints.
 func (c *Client) ScanDelete(ctx context.Context, opts ScanOptions) error {
 	return c.ScanEachBatch(ctx, opts, func(ctx context.Context, keys []string) error {
-		return c.DeleteMany(ctx, keys)
+		return c.DeleteKeys(ctx, keys)
 	})
 }
 
@@ -179,7 +179,7 @@ func (c *Client) ScanDelete(ctx context.Context, opts ScanOptions) error {
 // single-key UNLINK commands to avoid multi-key hash-slot constraints.
 func (c *Client) ScanUnlink(ctx context.Context, opts ScanOptions) error {
 	return c.ScanEachBatch(ctx, opts, func(ctx context.Context, keys []string) error {
-		return c.UnlinkMany(ctx, keys)
+		return c.UnlinkKeys(ctx, keys)
 	})
 }
 

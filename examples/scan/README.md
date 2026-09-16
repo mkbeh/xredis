@@ -1,16 +1,15 @@
-# Redis SCAN REST API
+## Example: Redis SCAN REST API
 
 This example shows how to use Redis SCAN helpers with `xredis`.
 
-**This example demonstrates:**
+### Key Concepts
 
-* Cursor-based page scan with `Scan`
-* Full scan with `ScanAll`
-* Batch iteration with `ScanEachBatch`
-* Type filtering with `ScanOptions.Type`
-* Pattern deletion with `ScanDelete`
-* Pattern unlinking with `ScanUnlink`
-* Cluster and Ring topology-wide scans
+* **Cursor-Based Scanning** — read one SCAN page at a time with `Scan`.
+* **Full Scans** — collect all matching keys with `ScanAll`.
+* **Batch Iteration** — process SCAN pages with `ScanEachBatch` without collecting the full keyspace first.
+* **Type Filtering** — restrict scans with `ScanOptions.Type`.
+* **Pattern Cleanup** — remove matching keys with `ScanDelete` or `ScanUnlink`.
+* **Topology-Wide Scans** — scan every master or live shard for Redis Cluster and Ring clients.
 
 ## Configuration
 
@@ -103,6 +102,8 @@ curl -X POST 'localhost:8080/sample/100'
 
 `Scan` reads one cursor page.
 
+`count` is a work-size hint, not a guaranteed page size.
+
 ```shell
 curl 'localhost:8080/scan/page?match=xredis:scan:*&count=5'
 ```
@@ -115,7 +116,7 @@ Continue from the returned numeric `next_cursor` value:
 curl 'localhost:8080/scan/page?match=xredis:scan:*&count=5&cursor=12'
 ```
 
-Replace 12 with the next_cursor value from the previous response.
+Replace 12 with the `next_cursor` value from the previous response.
 
 The scan is complete when `next_cursor` is `0`.
 
@@ -129,6 +130,9 @@ use `ScanAll`, `ScanEach`, or `ScanEachBatch`.
 ```shell
 curl 'localhost:8080/scan/all?match=xredis:scan:*&count=100'
 ```
+
+Redis SCAN may return the same key more than once during a full iteration, so
+`ScanAll` does not guarantee unique results.
 
 For large keyspaces, prefer `ScanEach` or `ScanEachBatch` because `ScanAll` stores all keys in memory.
 
