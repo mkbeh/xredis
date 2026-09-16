@@ -54,15 +54,15 @@ meterProvider, err := initMeterProvider()
 
 // Create a new otelxredis metrics.
 metrics, err := otelxredis.NewMetrics(
-otelxredis.WithMeterProvider(meterProvider),
+	otelxredis.WithMeterProvider(meterProvider),
 )
 
 // Create new xredis client with metrics.
 client, err := xredis.NewClient(
-redisOptions,
+	redisOptions,
 
-// Register metrics.
-xredis.WithMetrics(metrics),
+	// Register metrics.
+	xredis.WithMetrics(metrics),
 )
 ```
 
