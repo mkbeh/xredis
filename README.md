@@ -41,9 +41,7 @@ Runnable examples are available in the [examples](examples) directory.
   unlink operations.
 * **Topology-wide scans** — cursor-based iteration across Redis Cluster masters and Redis Ring shards, with type
   filtering and per-key or per-batch handlers.
-* **Distributed tracing** — OpenTelemetry command tracing through `redisotel` on the underlying Redis client.
-* **Metrics** — wrapper-level OpenTelemetry instrumentation for caches, locks, and rate limiters through
-  `extra/otelxredis`.
+* **OpenTelemetry** — optional metrics for caches, locks, and rate limiters through `extra/otelxredis`.
 
 ## Installation
 
