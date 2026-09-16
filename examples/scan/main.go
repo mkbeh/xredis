@@ -24,17 +24,6 @@ const (
 	sampleTTL    = 10 * time.Minute
 
 	defaultScanCount int64 = 100
-
-	sampleClient    = "scan-example-client"
-	contentTypeKey  = "Content-Type"
-	contentTypeJSON = "application/json"
-)
-
-var (
-	client *xredis.Client
-
-	redisAddr string
-	httpAddr  string
 )
 
 type scanPageResponse struct {
@@ -54,7 +43,7 @@ type scanAllResponse struct {
 	Keys  []string `json:"keys"`
 }
 
-type scanBatchResponse struct {
+type scanBatchesResponse struct {
 	Match   string      `json:"match"`
 	Type    string      `json:"type,omitempty"`
 	Count   int64       `json:"count"`
@@ -68,9 +57,57 @@ type scanBatch struct {
 	Keys  []string `json:"keys"`
 }
 
-func init() {
-	redisAddr = env("REDIS_ADDR", defaultRedis)
-	httpAddr = env("HTTP_ADDR", defaultHTTP)
+var client *xredis.Client
+
+func main() {
+	redisAddr := env("REDIS_ADDR", defaultRedis)
+	httpAddr := env("HTTP_ADDR", defaultHTTP)
+
+	// Create a Redis client.
+	var err error
+	client, err = xredis.NewClient(
+		&rdb.Options{
+			Addr: redisAddr,
+			DB:   defaultDB,
+		},
+	)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Println("unable to close Redis client:", closeErr)
+		}
+	}()
+
+	if err = client.Ping(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Register HTTP handlers.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("POST /sample/{id}", seedHandler)
+	mux.HandleFunc("GET /scan/page", scanPageHandler)
+	mux.HandleFunc("GET /scan/all", scanAllHandler)
+	mux.HandleFunc("GET /scan/batches", scanBatchesHandler)
+	mux.HandleFunc("DELETE /scan/delete/{id}", scanDeleteHandler)
+	mux.HandleFunc("DELETE /scan/unlink/{id}", scanUnlinkHandler)
+	mux.HandleFunc("DELETE /sample", cleanupHandler)
+
+	// Start the HTTP server.
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("scan example listening on http://%s", httpAddr)
+	log.Printf("redis address: %s", redisAddr)
+
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalln("unable to start web server:", err)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +213,7 @@ func scanBatchesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, scanBatchResponse{
+	writeJSON(w, http.StatusOK, scanBatchesResponse{
 		Match:   opts.Match,
 		Type:    opts.Type,
 		Count:   opts.Count,
@@ -185,7 +222,7 @@ func scanBatchesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func deleteHandler(w http.ResponseWriter, r *http.Request) {
+func scanDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	match := deletePattern(id)
@@ -203,7 +240,7 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func unlinkHandler(w http.ResponseWriter, r *http.Request) {
+func scanUnlinkHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	match := unlinkPattern(id)
@@ -235,55 +272,8 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func main() {
-	var err error
-
-	client, err = xredis.NewClient(
-		xredis.WithClientConfig(&xredis.ClientConfig{
-			Addr: redisAddr,
-			DB:   defaultDB,
-		}),
-		xredis.WithClientID(sampleClient),
-	)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Println("unable to close Redis client:", closeErr)
-		}
-	}()
-
-	if err = client.Ping(context.Background()); err != nil {
-		log.Fatalln(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("POST /sample/{id}", seedHandler)
-	mux.HandleFunc("GET /scan/page", scanPageHandler)
-	mux.HandleFunc("GET /scan/all", scanAllHandler)
-	mux.HandleFunc("GET /scan/batches", scanBatchesHandler)
-	mux.HandleFunc("DELETE /scan/delete/{id}", deleteHandler)
-	mux.HandleFunc("DELETE /scan/unlink/{id}", unlinkHandler)
-	mux.HandleFunc("DELETE /sample", cleanupHandler)
-
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("scan example listening on http://%s", httpAddr)
-	log.Printf("redis address: %s", redisAddr)
-
-	if err = server.ListenAndServe(); err != nil {
-		log.Fatalln("unable to start web server:", err)
-	}
-}
-
 func seedSample(ctx context.Context, id string) ([]string, error) {
-	keys := make([]string, 0, 15)
+	var keys []string
 
 	for i := 1; i <= 3; i++ {
 		key := stringKey(id, i)
@@ -294,21 +284,21 @@ func seedSample(ctx context.Context, id string) ([]string, error) {
 		keys = append(keys, key)
 	}
 
-	hashKey := hashKey(id)
+	key := hashKey(id)
 	if err := client.HSet(
 		ctx,
-		hashKey,
+		key,
 		sampleTTL,
 		"id", id,
 		"status", "active",
 	); err != nil {
 		return nil, err
 	}
-	keys = append(keys, hashKey)
+	keys = append(keys, key)
 
-	streamKey := streamKey(id)
+	key = streamKey(id)
 	if _, err := client.Raw().XAdd(ctx, &rdb.XAddArgs{
-		Stream: streamKey,
+		Stream: key,
 		Values: map[string]any{
 			"id":    id,
 			"event": "sample_seeded",
@@ -316,7 +306,10 @@ func seedSample(ctx context.Context, id string) ([]string, error) {
 	}).Result(); err != nil {
 		return nil, err
 	}
-	keys = append(keys, streamKey)
+	if err := client.Raw().Expire(ctx, key, sampleTTL).Err(); err != nil {
+		return nil, err
+	}
+	keys = append(keys, key)
 
 	for i := 1; i <= 5; i++ {
 		key := deleteKey(id, i)
@@ -407,7 +400,7 @@ func unlinkPattern(id string) string {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(contentTypeKey, contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if value != nil {
