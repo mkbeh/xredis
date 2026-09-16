@@ -3,11 +3,12 @@ module otel
 go 1.27
 
 require (
-	github.com/mkbeh/xredis v0.4.0
+	github.com/mkbeh/xredis v0.5.0
+	github.com/mkbeh/xredis/extra/otelxredis v0.1.0
+	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/extra/redisotel-native/v9 v9.22.0
 	github.com/redis/go-redis/extra/redisotel/v9 v9.22.0
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
